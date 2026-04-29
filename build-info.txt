@@ -1,0 +1,22 @@
+Build target:
+- Device: NanoPi R3S / R3S LTS
+- Firmware: FriendlyWrt / OpenWrt 25.12.2
+- Target: rockchip/armv8
+- Architecture: aarch64
+- Kernel: 6.1.141
+
+Module:
+- Name: amneziawg
+- File: amneziawg.ko
+- Version: 1.0.0
+- Vermagic: 6.1.141 SMP mod_unload modversions aarch64
+
+Build source:
+- Kernel source: FriendlyWrt rk3566 / kernel 6.1.141
+- Reference config: kernel-6.1.141-r3s.config
+- Source router info: device-kernel-info.txt
+
+Notes:
+- This is not a full OpenWrt kmod ipk package.
+- This is a raw kernel module built for the exact router kernel.
+- If the router kernel changes, rebuild the module.

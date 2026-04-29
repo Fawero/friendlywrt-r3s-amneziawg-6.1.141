@@ -1,0 +1,154 @@
+=== uname -a ===
+Linux FriendlyWrt 6.1.141 #1 SMP Thu Apr 16 19:37:10 CST 2026 aarch64 GNU/Linux
+
+=== uname -r ===
+6.1.141
+
+=== openwrt_release ===
+DISTRIB_ID='OpenWrt'
+DISTRIB_RELEASE='25.12.2'
+DISTRIB_REVISION='r32802-f505120278'
+DISTRIB_TARGET='rockchip/armv8'
+DISTRIB_ARCH='aarch64_generic'
+DISTRIB_DESCRIPTION='OpenWrt 25.12.2 r32802-f505120278'
+DISTRIB_TAINTS='busybox'
+
+=== wireguard modinfo ===
+filename:	/lib/modules/6.1.141/wireguard.ko
+alias:		net-pf-16-proto-16-family-wireguard
+alias:		rtnl-link-wireguard
+version:	1.0.0
+author:		Jason A. Donenfeld <Jason@zx2c4.com>
+description:	WireGuard secure network tunnel
+license:	GPL v2
+srcversion:	62B7613E60EFAE3430C2755
+depends:	libcurve25519-generic,udp_tunnel,ip6_udp_tunnel,libchacha20poly1305
+intree:		Y
+name:		wireguard
+vermagic:	6.1.141 SMP mod_unload modversions aarch64
+
+=== modules dir ===
+total 48K
+drwxrwxr-x 3 root root 4.0K Apr 16 19:38 .
+drwxr-xr-x 1 root root 4.0K Mar 26 04:09 ..
+drwxrwxr-x 2 root root  32K Apr 21 11:20 6.1.141
+total 123M
+drwxrwxr-x 2 root root  32K Apr 21 11:20 .
+drwxrwxr-x 3 root root 4.0K Apr 16 19:38 ..
+-rw-rw-r-- 1 root root  48K Apr 16 19:38 6lowpan.ko
+-rw-rw-r-- 1 root root  31K Apr 16 19:38 6pack.ko
+-rw-rw-r-- 1 root root  58K Apr 16 19:38 8021q.ko
+-rw-rw-r-- 1 root root 137K Apr 16 19:38 9p.ko
+-rw-rw-r-- 1 root root 153K Apr 16 19:38 9pnet.ko
+-rw-rw-r-- 1 root root  31K Apr 16 19:38 9pnet_fd.ko
+-rw-rw-r-- 1 root root  25K Apr 16 19:38 9pnet_virtio.ko
+-rw-rw-r-- 1 root root  12K Apr 16 19:38 a8293.ko
+-rw-rw-r-- 1 root root  17K Apr 16 19:38 acecad.ko
+-rw-rw-r-- 1 root root  19K Apr 16 19:38 act_bpf.ko
+-rw-rw-r-- 1 root root  17K Apr 16 19:38 act_connmark.ko
+-rw-rw-r-- 1 root root  23K Apr 16 19:38 act_csum.ko
+-rw-rw-r-- 1 root root  44K Apr 16 19:38 act_ct.ko
+-rw-rw-r-- 1 root root  22K Apr 16 19:38 act_ctinfo.ko
+-rw-rw-r-- 1 root root  18K Apr 16 19:38 act_gact.ko
+-rw-rw-r-- 1 root root  23K Apr 16 19:38 act_gate.ko
+-rw-rw-r-- 1 root root  23K Apr 16 19:38 act_ipt.ko
+-rw-rw-r-- 1 root root  26K Apr 16 19:38 act_mirred.ko
+-rw-rw-r-- 1 root root  23K Apr 16 19:38 act_mpls.ko
+-rw-rw-r-- 1 root root  17K Apr 16 19:38 act_nat.ko
+-rw-rw-r-- 1 root root  23K Apr 16 19:38 act_pedit.ko
+-rw-rw-r-- 1 root root  23K Apr 16 19:38 act_police.ko
+-rw-rw-r-- 1 root root  17K Apr 16 19:38 act_sample.ko
+-rw-rw-r-- 1 root root  17K Apr 16 19:38 act_simple.ko
+-rw-rw-r-- 1 root root  22K Apr 16 19:38 act_skbedit.ko
+-rw-rw-r-- 1 root root  17K Apr 16 19:38 act_skbmod.ko
+-rw-rw-r-- 1 root root  29K Apr 16 19:38 act_tunnel_key.ko
+-rw-rw-r-- 1 root root  22K Apr 16 19:38 act_vlan.ko
+-rw-rw-r-- 1 root root  16K Apr 16 19:38 ad525x_dpot-i2c.ko
+-rw-rw-r-- 1 root root  16K Apr 16 19:38 ad525x_dpot-spi.ko
+-rw-rw-r-- 1 root root  34K Apr 16 19:38 ad525x_dpot.ko
+-rw-rw-r-- 1 root root 9.9K Apr 16 19:38 ad714x-i2c.ko
+-rw-rw-r-- 1 root root  10K Apr 16 19:38 ad714x-spi.ko
+-rw-rw-r-- 1 root root  31K Apr 16 19:38 ad714x.ko
+-rw-rw-r-- 1 root root  42K Apr 16 19:38 adf7242.ko
+-rw-rw-r-- 1 root root  39K Apr 16 19:38 ads7846.ko
+-rw-rw-r-- 1 root root  39K Apr 16 19:38 adutux.ko
+-rw-rw-r-- 1 root root  15K Apr 16 19:38 adxl34x-i2c.ko
+-rw-rw-r-- 1 root root  11K Apr 16 19:38 adxl34x-spi.ko
+-rw-rw-r-- 1 root root  24K Apr 16 19:38 adxl34x.ko
+-rw-rw-r-- 1 root root  60K Apr 16 19:38 af9013.ko
+-rw-rw-r-- 1 root root  55K Apr 16 19:38 af9033.ko
+-rw-rw-r-- 1 root root  41K Apr 16 19:38 af_alg.ko
+-rw-rw-r-- 1 root root  62K Apr 16 19:38 af_key.ko
+-rw-rw-r-- 1 root root  15K Apr 16 19:38 af_packet_diag.ko
+-rw-rw-r-- 1 root root  22K Apr 16 19:38 ah4.ko
+-rw-rw-r-- 1 root root  23K Apr 16 19:38 ah6.ko
+-rw-rw-r-- 1 root root  44K Apr 16 19:38 aiptek.ko
+-rw-rw-r-- 1 root root  11K Apr 16 19:38 aircable.ko
+-rw-rw-r-- 1 root root  23K Apr 16 19:38 algif_aead.ko
+-rw-rw-r-- 1 root root  18K Apr 16 19:38 algif_hash.ko
+-rw-rw-r-- 1 root root  15K Apr 16 19:38 algif_rng.ko
+-rw-rw-r-- 1 root root  18K Apr 16 19:38 algif_skcipher.ko
+-rw-rw-r-- 1 root root  18K Apr 16 19:38 anubis.ko
+-rw-rw-r-- 1 root root  92K Apr 16 19:38 aoe.ko
+-rw-rw-r-- 1 root root  19K Apr 16 19:38 appledisplay.ko
+-rw-rw-r-- 1 root root  73K Apr 16 19:38 appletalk.ko
+-rw-rw-r-- 1 root root  84K Apr 16 19:38 ar5523.ko
+-rw-rw-r-- 1 root root  26K Apr 16 19:38 ark3116.ko
+-rw-rw-r-- 1 root root  45K Apr 16 19:38 arp_tables.ko
+-rw-rw-r-- 1 root root 8.5K Apr 16 19:38 arpt_mangle.ko
+-rw-rw-r-- 1 root root  11K Apr 16 19:38 arptable_filter.ko
+-rw-rw-r-- 1 root root  18K Apr 16 19:38 ascot2e.ko
+-rw-rw-r-- 1 root root 9.5K Apr 16 19:38 async_memcpy.ko
+-rw-rw-r-- 1 root root  18K Apr 16 19:38 async_pq.ko
+-rw-rw-r-- 1 root root 9.8K Apr 16 19:38 async_raid6_recov.ko
+-rw-rw-r-- 1 root root  12K Apr 16 19:38 async_tx.ko
+-rw-rw-r-- 1 root root  17K Apr 16 19:38 async_xor.ko
+-rw-rw-r-- 1 root root  38K Apr 16 19:38 at24.ko
+-rw-rw-r-- 1 root root  78K Apr 16 19:38 at76c50x-usb.ko
+-rw-rw-r-- 1 root root  56K Apr 16 19:38 at86rf230.ko
+-rw-rw-r-- 1 root root  18K Apr 16 19:38 atbm8830.ko
+-rw-rw-r-- 1 root root  48K Apr 16 19:38 ath.ko
+-rw-rw-r-- 1 root root 573K Apr 16 19:38 ath10k_core.ko
+-rw-rw-r-- 1 root root  77K Apr 16 19:38 ath10k_pci.ko
+-rw-rw-r-- 1 root root  25K Apr 16 19:38 ath10k_usb.ko
+-rw-rw-r-- 1 root root  30K Apr 16 19:38 ath3k.ko
+-rw-rw-r-- 1 root root 271K Apr 16 19:38 ath6kl_core.ko
+-rw-rw-r-- 1 root root  25K Apr 16 19:38 ath6kl_usb.ko
+-rw-rw-r-- 1 root root 218K Apr 16 19:38 ath9k.ko
+-rw-rw-r-- 1 root root  24K Apr 16 19:38 ath9k_common.ko
+-rw-rw-r-- 1 root root 135K Apr 16 19:38 ath9k_htc.ko
+-rw-rw-r-- 1 root root 511K Apr 16 19:38 ath9k_hw.ko
+-rw-rw-r-- 1 root root  37K Apr 16 19:38 ati_remote2.ko
+-rw-rw-r-- 1 root root 128K Apr 16 19:38 atm.ko
+-rw-rw-r-- 1 root root  63K Apr 16 19:38 atmel_mxt_ts.ko
+-rw-rw-r-- 1 root root  36K Apr 16 19:38 atusb.ko
+-rw-rw-r-- 1 root root  19K Apr 16 19:38 au8522_common.ko
+-rw-rw-r-- 1 root root  23K Apr 16 19:38 au8522_decoder.ko
+-rw-rw-r-- 1 root root  23K Apr 16 19:38 au8522_dig.ko
+-rw-rw-r-- 1 root root 224K Apr 16 19:38 auth_rpcgss.ko
+-rw-rw-r-- 1 root root  17K Apr 16 19:38 authenc.ko
+-rw-rw-r-- 1 root root  17K Apr 16 19:38 authencesn.ko
+-rw-rw-r-- 1 root root 131K Apr 16 19:38 ax25.ko
+-rw-rw-r-- 1 root root 384K Apr 16 19:38 batman-adv.ko
+-rw-rw-r-- 1 root root  25K Apr 16 19:38 baycom_ser_fdx.ko
+-rw-rw-r-- 1 root root  24K Apr 16 19:38 baycom_ser_hdx.ko
+-rw-rw-r-- 1 root root 462K Apr 16 19:38 bcache.ko
+-rw-rw-r-- 1 root root  18K Apr 16 19:38 bcm203x.ko
+-rw-rw-r-- 1 root root  24K Apr 16 19:38 bcm3510.ko
+-rw-rw-r-- 1 root root 5.5M Apr 16 19:38 bcmdhd.ko
+-rw-rw-r-- 1 root root  20K Apr 16 19:38 belkin_sa.ko
+-rw-rw-r-- 1 root root  35K Apr 16 19:38 bfusb.ko
+-rw-rw-r-- 1 root root  34K Apr 16 19:38 binfmt_misc.ko
+-rw-rw-r-- 1 root root  64K Apr 16 19:38 blocklayoutdriver.ko
+-rw-rw-r-- 1 root root  12K Apr 16 19:38 blowfish_common.ko
+-rw-rw-r-- 1 root root  13K Apr 16 19:38 blowfish_generic.ko
+-rw-rw-r-- 1 root root  54K Apr 16 19:38 bluetooth_6lowpan.ko
+-rw-rw-r-- 1 root root  51K Apr 16 19:38 bnep.ko
+-rw-rw-r-- 1 root root 334K Apr 16 19:38 bonding.ko
+-rw-rw-r-- 1 root root  27K Apr 16 19:38 bpa10x.ko
+-rw-rw-r-- 1 root root  24K Apr 16 19:38 bpqether.ko
+-rw-rw-r-- 1 root root  19K Apr 16 19:38 bq24735-charger.ko
+-rw-rw-r-- 1 root root  63K Apr 16 19:38 bq25700_charger.ko
+-rw-rw-r-- 1 root root  36K Apr 16 19:38 br2684.ko
+-rw-rw-r-- 1 root root  37K Apr 16 19:38 br_netfilter.ko
+-rw-rw-r-- 1 root root 512K Apr 16 19:38 brcmfmac.ko
