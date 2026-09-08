@@ -225,12 +225,70 @@ default via 192.168.88.10 dev eth0 proto static src 192.168.88.15
 
 was unchanged before, during and after all three tests, and all disposable test interfaces were removed successfully.
 
+## netifd integration — SUCCESS
+
+A custom shell protocol handler `korobka_awg` is now registered by netifd and owns interface lifecycle for the three provider profiles.
+
+The first attempt failed because the handler was copied and only `network reload` was used. netifd therefore did not register the new protocol and reported the interfaces as `proto: none` / `NO_DEVICE`. The handler also originally used the option name `ifname`, which was renamed to `awg_ifname` to avoid ambiguity with netifd device handling.
+
+After installing the corrected helper, recreating UCI sections, committing, and restarting the network service, `ubus call network get_proto_handlers` showed:
+
+```text
+korobka_awg
+```
+
+with validation fields:
+
+```text
+config
+awg_ifname
+endpoint_ip
+tunlink
+advanced_security
+```
+
+Before `ifup`, all three interfaces were correctly recognized as available custom protocol interfaces:
+
+```text
+proto: korobka_awg
+available: true
+up: false
+```
+
+After `ifup awg_warp`, `ifup awg_kz`, and `ifup awg_lu`, all three were simultaneously present and `up`:
+
+```text
+awg_warp  172.16.0.2/32  2606:4700:110:8e93:9f56:5e56:4540:311e/128
+awg_kz    10.14.0.2/32
+awg_lu    10.14.0.2/32
+```
+
+The `/32` normalization for the two Surfshark profiles intentionally avoids installing duplicate connected `/16` routes even though both provider configs contain `10.14.0.2/16`.
+
+`ifstatus` confirmed for all three:
+
+```text
+up: true
+available: true
+l3_device: awg_*
+proto: korobka_awg
+route: []
+```
+
+The main default route remained unchanged:
+
+```text
+default via 192.168.88.10 dev eth0 proto static src 192.168.88.15
+```
+
+This confirms that provider `AllowedIPs = 0.0.0.0/0` is kept inside the AWG peer configuration and is not injected into the main routing table by netifd.
+
 ## Next step
 
-The ABI/userspace/provider compatibility phase is complete. Next:
+The ABI/userspace/provider/netifd integration phase is complete. Next:
 
-1. store imported provider profiles locally on the box with mode `0600`;
-2. add a custom netifd protocol helper so netifd owns AWG interface lifecycle;
-3. keep provider `AllowedIPs` out of the main routing table;
-4. expose stable interfaces for WARP, Surfshark KZ and Surfshark LU;
-5. then connect those interfaces to Podkop/sing-box policy routing.
+1. generate simultaneous traffic through `awg_warp`, `awg_kz`, and `awg_lu` while all three remain up;
+2. confirm fresh handshakes and transfer counters for all three concurrently;
+3. enable UCI `auto=1` for all three;
+4. reboot the NanoPi and validate that all three return automatically while the WAN/default route stays intact;
+5. then install and integrate Podkop/sing-box policy routing.
