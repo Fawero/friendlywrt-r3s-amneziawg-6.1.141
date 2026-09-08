@@ -85,9 +85,7 @@ timer_delete_sync() -> del_timer_sync()
 
 `src/compat/compat.h` не изменяется.
 
-## Успешная сборка
-
-Сборка AWG 3.1 под FriendlyWrt kernel 6.1.141 завершена успешно.
+## Успешная сборка kernel module
 
 Артефакт на build server:
 
@@ -115,18 +113,56 @@ missing=0
 crc_mismatches=0
 ```
 
-Это означает, что все импортируемые модулем kernel symbols найдены в сохранённом `Module.symvers`, и CRC совпадают.
+## Успешная APK-упаковка
+
+Для FriendlyWrt собран отдельный APK-пакет без стандартного OpenWrt `KernelPackage`, чтобы не получить ложную зависимость на пакетный kernel 6.12.74.
+
+Пакет:
+
+```text
+friendlywrt-amneziawg-kmod-3.1.20260906-r1.apk
+```
+
+Артефакт:
+
+```text
+/home/anatoliy-bormataylo/friendlywrt-awg3-apk/output/friendlywrt-amneziawg-kmod-3.1.20260906-r1.apk
+```
+
+Размер: около 55 KiB.
+
+SHA256 APK:
+
+```text
+150b13cb67b8a1fcf9764b918248fe873446feb4808e5c00058a326595ece2c3
+```
+
+В пакет входят:
+
+```text
+/lib/modules/6.1.141/amneziawg.ko
+/etc/modules.d/30-amneziawg
+/usr/share/korobka/amneziawg-build-info.txt
+```
+
+APK recipe:
+
+- проверяет runtime `uname -r == 6.1.141` перед установкой;
+- не объявляет стандартную зависимость на OpenWrt kernel 6.12.74;
+- использует `Package/friendlywrt-amneziawg-kmod/extra_provides` для runtime-модулей `ip6_udp_tunnel.ko`, `libchacha20poly1305.ko`, `libcurve25519-generic.ko`, `udp_tunnel.ko`;
+- не force-load'ит `amneziawg` во время установки;
+- регистрирует модуль для будущих загрузок через `/etc/modules.d/30-amneziawg`.
+
+В build log секция `APK METADATA` на Ubuntu SDK печатает ошибку `Unable to read database`, потому что SDK `apk` вызывается вне системной APK database. Это не помешало созданию пакета и не является ошибкой сборки; финальный статус — `SUCCESS`.
 
 ## Текущий статус
 
-Модуль считается кандидатом для runtime-теста на чистой коробке, но пока не устанавливается постоянно и не добавляется в автозагрузку.
+Kernel module и APK собраны. Следующий этап — runtime validation уже на чистой NanoPi:
 
-Следующий шаг:
-
-1. перенести `.ko` на коробку во `/tmp`;
-2. проверить SHA256 и `modinfo` уже на коробке;
-3. выполнить временный `insmod`;
-4. проверить `lsmod` и kernel log;
-5. создать и удалить тестовый link типа `amneziawg` без настройки ключей;
-6. только после успешного runtime-теста регистрировать модуль постоянно;
-7. затем переходить к `amneziawg-tools` и `luci-proto-amneziawg`.
+1. передать APK на коробку во `/tmp`;
+2. проверить SHA256;
+3. установить локальный пакет через `apk --allow-untrusted add`;
+4. проверить наличие файлов пакета и запись в `modules.dep`;
+5. вручную выполнить первый `modprobe amneziawg`;
+6. проверить `lsmod`, kernel log и создание тестового интерфейса `type amneziawg`;
+7. только после успешного теста переходить к `amneziawg-tools` и `luci-proto-amneziawg`.
