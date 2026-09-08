@@ -153,6 +153,84 @@ Confirmed on the NanoPi R3S LTS:
 - private/public key operations work;
 - test interface create/configure/read/delete lifecycle works.
 
+## Real provider tunnel validation — SUCCESS
+
+On 2026-09-09 three real client profiles were tested one by one with a safe `/32` host route for test traffic only. The system default route remained unchanged through the entire test.
+
+### Cloudflare WARP / full AWG3 profile
+
+Confirmed working with the full AWG3 parameter set, including:
+
+```text
+Jc=4
+Jmin=40
+Jmax=70
+I1=<large binary descriptor>
+ContentPaddingAddition=27-97
+RekeyAfterTime=116-131
+RekeyTimeout=6-9
+RejectAfterTime=171-196
+KeepaliveTimeout=9-16
+MaxHandshakeAttempts=18-26
+RandomTrailers=on
+DisableCookies=on
+```
+
+Runtime result:
+
+```text
+endpoint: 162.159.195.1:500
+ping: 3/3 received, 0% loss
+latest handshake: 3 seconds ago
+transfer: 440 B received, 2.37 KiB sent
+```
+
+### Surfshark Kazakhstan
+
+The provider hostname could not be resolved by the local/system resolver, so the endpoint was resolved externally and tested as `217.9.250.83:51820`.
+
+Runtime result:
+
+```text
+Jc=120
+Jmin=23
+Jmax=911
+ping: 3/3 received, 0% loss
+latest handshake: 3 seconds ago
+transfer: 476 B received, 56.09 KiB sent
+```
+
+### Surfshark Luxembourg
+
+The provider hostname could not be resolved by the local/system resolver, so the endpoint was resolved externally and tested as `185.153.151.149:51820`.
+
+Runtime result:
+
+```text
+Jc=120
+Jmin=23
+Jmax=911
+ping: 3/3 received, 0% loss
+latest handshake: 3 seconds ago
+transfer: 476 B received, 51.83 KiB sent
+```
+
+For provider testing the harness forces `AdvancedSecurity = on` in the temporary sanitized peer configuration. Provider source files are not modified and are never committed to Git because they contain private keys.
+
+Safety result:
+
+```text
+default via 192.168.88.10 dev eth0 proto static src 192.168.88.15
+```
+
+was unchanged before, during and after all three tests, and all disposable test interfaces were removed successfully.
+
 ## Next step
 
-The next functional test is no longer basic ABI/userspace compatibility. It is importing a real provider AWG/WG client configuration and validating an actual handshake and tunneled traffic. After that, integrate the interface lifecycle with netifd/Korobka and then Podkop/sing-box policy routing.
+The ABI/userspace/provider compatibility phase is complete. Next:
+
+1. store imported provider profiles locally on the box with mode `0600`;
+2. add a custom netifd protocol helper so netifd owns AWG interface lifecycle;
+3. keep provider `AllowedIPs` out of the main routing table;
+4. expose stable interfaces for WARP, Surfshark KZ and Surfshark LU;
+5. then connect those interfaces to Podkop/sing-box policy routing.
