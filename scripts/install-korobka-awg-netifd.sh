@@ -14,7 +14,8 @@ DST="/lib/netifd/proto/korobka_awg.sh"
     exit 1
 }
 
-install -m 0755 "$SRC" "$DST"
+cp "$SRC" "$DST"
+chmod 0755 "$DST"
 
 mkdir -p /etc/korobka/tunnels
 chmod 700 /etc/korobka /etc/korobka/tunnels
