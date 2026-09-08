@@ -155,14 +155,90 @@ APK recipe:
 
 В build log секция `APK METADATA` на Ubuntu SDK печатает ошибку `Unable to read database`, потому что SDK `apk` вызывается вне системной APK database. Это не помешало созданию пакета и не является ошибкой сборки; финальный статус — `SUCCESS`.
 
-## Текущий статус
+## Runtime validation на NanoPi R3S LTS
 
-Kernel module и APK собраны. Следующий этап — runtime validation уже на чистой NanoPi:
+На чистой FriendlyWrt 25.12.2 / kernel `6.1.141` выполнен полный runtime-тест.
 
-1. передать APK на коробку во `/tmp`;
-2. проверить SHA256;
-3. установить локальный пакет через `apk --allow-untrusted add`;
-4. проверить наличие файлов пакета и запись в `modules.dep`;
-5. вручную выполнить первый `modprobe amneziawg`;
-6. проверить `lsmod`, kernel log и создание тестового интерфейса `type amneziawg`;
-7. только после успешного теста переходить к `amneziawg-tools` и `luci-proto-amneziawg`.
+Установка локального APK прошла успешно:
+
+```text
+(1/1) Installing friendlywrt-amneziawg-kmod (3.1.20260906-r1)
+Executing ...pre-install
+Executing ...post-install
+OK
+```
+
+После установки подтверждено:
+
+```text
+/lib/modules/6.1.141/amneziawg.ko
+/etc/modules.d/30-amneziawg
+/usr/share/korobka/amneziawg-build-info.txt
+```
+
+`modinfo` на самой коробке:
+
+```text
+version:    3.1.20260812
+srcversion: D4E18EBFDD0D26E8105464D
+depends:    libcurve25519-generic,udp_tunnel,ip6_udp_tunnel,libchacha20poly1305
+vermagic:   6.1.141 SMP mod_unload modversions aarch64
+```
+
+`modules.dep` зарегистрирован:
+
+```text
+amneziawg.ko: libchacha20poly1305.ko poly1305-neon.ko libcurve25519-generic.ko ip6_udp_tunnel.ko udp_tunnel.ko
+```
+
+Первый ручной load:
+
+```text
+modprobe amneziawg
+```
+
+успешен. В `lsmod` присутствуют `amneziawg` и все зависимости.
+
+Kernel log подтверждает инициализацию:
+
+```text
+amneziawg: AmneziaWG 3.1.20260812 loaded. See amnezia.org for information.
+```
+
+Также успешно создан и удалён тестовый netlink-интерфейс:
+
+```text
+ip link add awg-test type amneziawg
+ip -details link show awg-test
+ip link del awg-test
+```
+
+Интерфейс показывался как:
+
+```text
+awg-test: <POINTOPOINT,NOARP> mtu 1420 ...
+amneziawg ...
+```
+
+После удаления `awg-test` отсутствует.
+
+## Итоговый статус
+
+AWG3 kernel module для этой FriendlyWrt-сборки считается подтверждённо рабочим на реальном железе.
+
+Подтверждено:
+
+- exact kernel ABI `6.1.141`;
+- модуль загружается через `modprobe`;
+- зависимости разрешаются;
+- `amneziawg` link type зарегистрирован;
+- тестовый AWG-интерфейс создаётся и удаляется;
+- APK корректно устанавливает модуль и регистрирует автозагрузку.
+
+Следующий этап:
+
+1. `amneziawg-tools` userspace;
+2. `luci-proto-amneziawg`;
+3. импорт реального AWG/WG client config;
+4. проверка handshake и трафика;
+5. затем интеграция с Podkop/sing-box и панелью Коробки.
