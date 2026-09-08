@@ -24,13 +24,21 @@ fail() { echo "ERROR: $*" >&2; exit 1; }
 
 mkdir -p "$WORK" "$OUT"
 
-log 'PRECHECK MODULE'
-command -v wget >/dev/null || fail 'wget not found'
-command -v tar >/dev/null || fail 'tar not found'
-command -v zstd >/dev/null || fail 'zstd not found'
-command -v modinfo >/dev/null || fail 'modinfo not found'
-command -v sha256sum >/dev/null || fail 'sha256sum not found'
+log 'PRECHECK HOST TOOLS'
+REQUIRED_TOOLS='wget tar zstd modinfo sha256sum make gcc g++ flex bison gawk gettext git rsync swig unzip file python3'
+MISSING_TOOLS=''
+for tool in $REQUIRED_TOOLS; do
+    if ! command -v "$tool" >/dev/null 2>&1; then
+        MISSING_TOOLS="$MISSING_TOOLS $tool"
+    fi
+done
+if [ -n "$MISSING_TOOLS" ]; then
+    echo "Missing host tools:$MISSING_TOOLS" >&2
+    echo "Install the OpenWrt SDK prerequisites for Ubuntu 24.04 and rerun." >&2
+    exit 2
+fi
 
+log 'PRECHECK MODULE'
 test -s "$MODULE" || fail "module not found: $MODULE"
 test -s "$PKG_SRC/Makefile" || fail "package Makefile not found: $PKG_SRC/Makefile"
 
@@ -79,9 +87,11 @@ module_sha256=$EXPECTED_MODULE_SHA256
 build_method=external-module-against-friendlyarm-kernel-6.1.141
 EOF
 
-log 'BUILD APK'
+log 'SDK PREREQUISITES / DEFCONFIG'
 cd "$SDK_DIR"
-make defconfig >/dev/null
+make defconfig V=s
+
+log 'BUILD APK'
 make package/friendlywrt-amneziawg-kmod/clean V=s
 make package/friendlywrt-amneziawg-kmod/compile V=s
 
