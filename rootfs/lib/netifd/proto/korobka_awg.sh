@@ -27,8 +27,8 @@ proto_korobka_awg_init_config() {
 proto_korobka_awg_setup() {
     local cfg="$1"
     local config ifname endpoint_ip tunlink advanced_security
-    local addrs mtu endpoint port endpoint_route san dir
-    local raw addr cidr src4 src6 oldifs
+    local addrs mtu endpoint port endpoint_route san dir host
+    local raw addr src4 src6 oldifs
 
     json_get_vars config ifname endpoint_ip tunlink advanced_security
 
@@ -69,7 +69,7 @@ proto_korobka_awg_setup() {
         case "$endpoint" in
             \[*\]:*) endpoint_route="" ;;
             *:*)
-                local host="${endpoint%:*}"
+                host="${endpoint%:*}"
                 case "$host" in
                     *[!0-9.]*|'') endpoint_route="" ;;
                     *) endpoint_route="$host" ;;
@@ -139,6 +139,12 @@ proto_korobka_awg_setup() {
         return 1
     fi
 
+    ip link set mtu "$mtu" dev "$ifname"
+
+    [ -n "$endpoint_route" ] && ( proto_add_host_dependency "$cfg" "$endpoint_route" "$tunlink" )
+
+    proto_init_update "$ifname" 1
+
     src4=""
     src6=""
     oldifs="$IFS"
@@ -149,30 +155,17 @@ proto_korobka_awg_setup() {
         addr="${addr%%/*}"
         case "$addr" in
             *:*)
-                cidr=128
                 [ -n "$src6" ] || src6="$addr"
+                proto_add_ipv6_address "$addr" 128
                 ;;
             *)
-                cidr=32
                 [ -n "$src4" ] || src4="$addr"
+                proto_add_ipv4_address "$addr" 32
                 ;;
         esac
-        ip addr add "$addr/$cidr" dev "$ifname" || {
-            IFS="$oldifs"
-            ip link del "$ifname" 2>/dev/null || true
-            rm -f "$san"
-            korobka_awg_fail "$cfg" "ADDRESS_ADD_FAILED"
-            return 1
-        }
     done
     IFS="$oldifs"
 
-    ip link set mtu "$mtu" dev "$ifname"
-    ip link set "$ifname" up
-
-    [ -n "$endpoint_route" ] && ( proto_add_host_dependency "$cfg" "$endpoint_route" "$tunlink" )
-
-    proto_init_update "$ifname" 1
     proto_add_data
     json_add_string "config" "$config"
     json_add_string "tunlink" "$tunlink"
