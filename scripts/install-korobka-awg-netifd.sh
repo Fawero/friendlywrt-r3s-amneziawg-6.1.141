@@ -20,7 +20,9 @@ chmod 0755 "$DST"
 mkdir -p /etc/korobka/tunnels
 chmod 700 /etc/korobka /etc/korobka/tunnels
 
-/etc/init.d/network reload
+# netifd discovers shell protocol handlers during process startup, not a config-only reload.
+/etc/init.d/network restart
 
 echo "Installed: $DST"
 echo "Tunnel directory: /etc/korobka/tunnels"
+echo "Network restarted so korobka_awg is registered by netifd"
