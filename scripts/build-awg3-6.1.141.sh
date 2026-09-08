@@ -48,7 +48,6 @@ else
     git -C "$AWG" fetch --tags --prune origin
 fi
 
-# Refuse to silently build a different revision if the requested tag does not exist.
 git -C "$AWG" rev-parse -q --verify "refs/tags/$AWG_TAG" >/dev/null \
     || fail "tag $AWG_TAG не найден upstream"
 
@@ -62,10 +61,9 @@ echo "awg_commit=$AWG_COMMIT"
 git -C "$AWG" log -1 --decorate --oneline
 
 log "SOURCE COMPATIBILITY SCAN"
-# These are known compatibility boundaries for 6.1-era kernels. We deliberately
-# do not patch them here: first establish what the selected upstream tag contains.
-TIMER_SRC_COUNT="$(grep -RIlE '\b(timer_delete|timer_delete_sync)\b' "$AWG/src" --include='*.c' --include='*.h' 2>/dev/null | wc -l)"
-NLA_SRC_COUNT="$(grep -RIlE '\bnla_put_uint[[:space:]]*\(' "$AWG/src" --include='*.c' --include='*.h' 2>/dev/null | wc -l)"
+# No match is a valid scan result. Wrap grep so pipefail does not terminate the build.
+TIMER_SRC_COUNT="$({ grep -RIlE '\b(timer_delete|timer_delete_sync)\b' "$AWG/src" --include='*.c' --include='*.h' 2>/dev/null || true; } | wc -l)"
+NLA_SRC_COUNT="$({ grep -RIlE '\bnla_put_uint[[:space:]]*\(' "$AWG/src" --include='*.c' --include='*.h' 2>/dev/null || true; } | wc -l)"
 
 echo "files_using_new_timer_api=$TIMER_SRC_COUNT"
 echo "files_using_nla_put_uint=$NLA_SRC_COUNT"
