@@ -24,33 +24,109 @@
   - `~/rebuild-awg2-clean.sh`
   - `~/continue-awg2-build.sh`.
 
-Это позволяет повторно использовать уже подготовленный kernel build tree/toolchain вместо восстановления среды с нуля.
+Это позволило повторно использовать уже подготовленный kernel build tree/toolchain вместо восстановления среды с нуля.
 
 ## Целевая версия
 
-На 2026-09-08 целимся в kernel module AmneziaWG `v3.1.20260906`.
+На 2026-09-08 выбран upstream tag AmneziaWG `v3.1.20260906`.
 
-Причина: релиз 2026-09-07 обновил модуль с `v3.1.20260828` до `v3.1.20260906` и исправил обработку `RandomTrailers` (они больше не добавляются к I1-I5 и junk-пакетам). Предыдущие теги 3.1.20260812–3.1.20260828 имеют подтверждённые проблемы вокруг RandomTrailers/классификации пакетов.
+Причина: релиз исправляет обработку `RandomTrailers` по сравнению с предыдущими 3.1-тегами.
 
-Userspace/LuCI должны быть согласованы с AWG 3.1; целевой LuCI — `luci-proto-amneziawg 3.1.1` либо более свежий совместимый вариант после проверки.
+Важно: `modinfo` собранного модуля показывает внутреннюю версию:
+
+```text
+version: 3.1.20260812
+```
+
+При этом source tag/commit сборки:
+
+```text
+awg_tag=v3.1.20260906
+awg_commit=4569c4c67f3a57414969260cafbbd04694fbaae0
+```
+
+Для идентификации нашей сборки используем source tag + commit + SHA256, а не только поле `modinfo version`.
 
 ## Ограничение FriendlyWrt
 
-На коробке реально загружено kernel `6.1.141`, несмотря на APK metadata от OpenWrt kernel 6.12.74. Поэтому готовые `kmod-amneziawg` APK из OpenWrt feed не использовать. Kernel module должен быть собран против сохранённого FriendlyWrt `kernel-rockchip` и иметь:
+На коробке реально загружено kernel `6.1.141`, несмотря на APK metadata от OpenWrt kernel 6.12.74. Поэтому готовые `kmod-amneziawg` APK из OpenWrt feed не использовать. Kernel module собран против сохранённого FriendlyWrt `kernel-rockchip`.
+
+## Compatibility patch для FriendlyARM 6.1.141
+
+Upstream AWG 3.1 использует новый timer API:
 
 ```text
-vermagic: 6.1.141 SMP mod_unload modversions aarch64
+timer_delete()
+timer_delete_sync()
 ```
 
-## Следующий шаг
+В FriendlyARM kernel 6.1.141 доступны:
 
-Перед изменением старого build tree снять точные параметры прежней сборки:
+```text
+del_timer()
+del_timer_sync()
+```
 
-- содержимое трёх build scripts;
-- git remote / branch / commit старых исходников AWG;
-- git remote / branch / commit `kernel-rockchip`;
-- cross-compiler/toolchain, используемый скриптами;
-- `make kernelrelease`, `ARCH`, `CROSS_COMPILE`;
-- `modinfo` старого успешно собранного `output/amneziawg.ko`.
+При этом upstream `src/compat/compat.h` предполагает наличие backport нового timer API в части 6.1.x, которого в данном FriendlyARM tree нет.
 
-После этого создать отдельный каталог для AWG 3.1, не ломая рабочую AWG 2.0 среду, checkout `v3.1.20260906`, собрать внешний модуль против существующего `kernel-rockchip`, проверить `modinfo` и только затем переносить модуль на тестовую коробку.
+Поэтому применяется узкий call-site patch только к:
+
+```text
+src/device.c
+src/timers.c
+```
+
+Замены:
+
+```text
+timer_delete()      -> del_timer()
+timer_delete_sync() -> del_timer_sync()
+```
+
+`src/compat/compat.h` не изменяется.
+
+## Успешная сборка
+
+Сборка AWG 3.1 под FriendlyWrt kernel 6.1.141 завершена успешно.
+
+Артефакт на build server:
+
+```text
+/home/anatoliy-bormataylo/friendlywrt-awg3-6.1.141/output/amneziawg-v3.1.20260906.ko
+```
+
+Параметры:
+
+```text
+source tag:      v3.1.20260906
+source commit:   4569c4c67f3a57414969260cafbbd04694fbaae0
+kernelrelease:   6.1.141
+module version:  3.1.20260812
+vermagic:        6.1.141 SMP mod_unload modversions aarch64
+SHA256:          572f4250d8bbd470a46f9dd835efa6ebd90479ab0875c840b1277c949a7844f7
+```
+
+ABI validation:
+
+```text
+imports=198
+found_in_kernel=198
+missing=0
+crc_mismatches=0
+```
+
+Это означает, что все импортируемые модулем kernel symbols найдены в сохранённом `Module.symvers`, и CRC совпадают.
+
+## Текущий статус
+
+Модуль считается кандидатом для runtime-теста на чистой коробке, но пока не устанавливается постоянно и не добавляется в автозагрузку.
+
+Следующий шаг:
+
+1. перенести `.ko` на коробку во `/tmp`;
+2. проверить SHA256 и `modinfo` уже на коробке;
+3. выполнить временный `insmod`;
+4. проверить `lsmod` и kernel log;
+5. создать и удалить тестовый link типа `amneziawg` без настройки ключей;
+6. только после успешного runtime-теста регистрировать модуль постоянно;
+7. затем переходить к `amneziawg-tools` и `luci-proto-amneziawg`.
