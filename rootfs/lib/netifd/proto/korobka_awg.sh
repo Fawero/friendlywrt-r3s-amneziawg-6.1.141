@@ -18,7 +18,7 @@ proto_korobka_awg_init_config() {
     available=1
 
     proto_config_add_string "config"
-    proto_config_add_string "ifname"
+    proto_config_add_string "awg_ifname"
     proto_config_add_string "endpoint_ip"
     proto_config_add_string "tunlink"
     proto_config_add_boolean "advanced_security"
@@ -26,11 +26,11 @@ proto_korobka_awg_init_config() {
 
 proto_korobka_awg_setup() {
     local cfg="$1"
-    local config ifname endpoint_ip tunlink advanced_security
+    local config awg_ifname endpoint_ip tunlink advanced_security
     local addrs mtu endpoint port endpoint_route san dir host
     local raw addr src4 src6 oldifs
 
-    json_get_vars config ifname endpoint_ip tunlink advanced_security
+    json_get_vars config awg_ifname endpoint_ip tunlink advanced_security
 
     [ -n "$config" ] || {
         korobka_awg_fail "$cfg" "MISSING_CONFIG"
@@ -45,7 +45,7 @@ proto_korobka_awg_setup() {
         return 1
     }
 
-    [ -n "$ifname" ] || ifname="$cfg"
+    [ -n "$awg_ifname" ] || awg_ifname="$cfg"
     [ -n "$tunlink" ] || tunlink="wan"
     [ -n "$advanced_security" ] || advanced_security=1
 
@@ -125,25 +125,25 @@ proto_korobka_awg_setup() {
         return 1
     }
 
-    ip link del "$ifname" 2>/dev/null || true
-    if ! ip link add "$ifname" type amneziawg; then
+    ip link del "$awg_ifname" 2>/dev/null || true
+    if ! ip link add "$awg_ifname" type amneziawg; then
         rm -f "$san"
         korobka_awg_fail "$cfg" "LINK_CREATE_FAILED"
         return 1
     fi
 
-    if ! awg setconf "$ifname" "$san"; then
-        ip link del "$ifname" 2>/dev/null || true
+    if ! awg setconf "$awg_ifname" "$san"; then
+        ip link del "$awg_ifname" 2>/dev/null || true
         rm -f "$san"
         korobka_awg_fail "$cfg" "AWG_SETCONF_FAILED"
         return 1
     fi
 
-    ip link set mtu "$mtu" dev "$ifname"
+    ip link set mtu "$mtu" dev "$awg_ifname"
 
     [ -n "$endpoint_route" ] && ( proto_add_host_dependency "$cfg" "$endpoint_route" "$tunlink" )
 
-    proto_init_update "$ifname" 1
+    proto_init_update "$awg_ifname" 1
 
     src4=""
     src6=""
@@ -178,11 +178,11 @@ proto_korobka_awg_setup() {
 
 proto_korobka_awg_teardown() {
     local cfg="$1"
-    local ifname
+    local awg_ifname
 
-    json_get_vars ifname
-    [ -n "$ifname" ] || ifname="$cfg"
-    ip link del "$ifname" 2>/dev/null || true
+    json_get_vars awg_ifname
+    [ -n "$awg_ifname" ] || awg_ifname="$cfg"
+    ip link del "$awg_ifname" 2>/dev/null || true
     rm -f "/var/run/korobka-awg/$cfg.conf"
 }
 
