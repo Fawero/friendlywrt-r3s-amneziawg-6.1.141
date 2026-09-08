@@ -321,12 +321,71 @@ default via 192.168.88.10 dev eth0 proto static src 192.168.88.15
 
 This confirms that the three provider tunnels can coexist and carry traffic concurrently without taking ownership of the system default route.
 
-## Next step
+## Reboot/autostart validation — SUCCESS
 
-The ABI/userspace/provider/netifd/concurrent-traffic integration phase is complete. Next:
+UCI `auto=1` was enabled for `awg_warp`, `awg_kz`, and `awg_lu`, the NanoPi was rebooted, and no manual `ifup` was executed after boot.
 
-1. enable UCI `auto=1` for `awg_warp`, `awg_kz`, and `awg_lu`;
-2. reboot the NanoPi;
-3. validate that all three interfaces return automatically with correct addresses and endpoint host routes;
-4. confirm fresh handshakes/traffic after reboot while the WAN/default route stays intact;
-5. then install and integrate Podkop/sing-box policy routing.
+Immediately after reboot:
+
+```text
+kernel: 6.1.141
+amneziawg module: loaded
+awg userspace: amneziawg-tools v3.1.20260812
+korobka_awg protocol: registered
+```
+
+All three interfaces returned automatically and were reported by netifd as `up`, `available`, `autostart: true`, with `proto: korobka_awg`:
+
+```text
+awg_warp  172.16.0.2/32  2606:4700:110:8e93:9f56:5e56:4540:311e/128
+awg_kz    10.14.0.2/32
+awg_lu    10.14.0.2/32
+```
+
+Endpoint host routes were restored automatically through the physical WAN:
+
+```text
+162.159.195.1 via 192.168.88.10 dev eth0
+217.9.250.83 via 192.168.88.10 dev eth0
+185.153.151.149 via 192.168.88.10 dev eth0
+```
+
+The system default route remained unchanged:
+
+```text
+default via 192.168.88.10 dev eth0 proto static src 192.168.88.15
+```
+
+Post-reboot traffic test to `1.1.1.1`:
+
+```text
+awg_warp: 3 transmitted, 3 received, 0% loss
+awg_kz:   3 transmitted, 3 received, 0% loss
+awg_lu:   3 transmitted, 2 received, 33% loss
+```
+
+Despite intermittent ICMP loss on the Luxembourg path, all three interfaces had current handshakes and non-zero bidirectional transfer counters:
+
+```text
+awg_warp: RX 440 B, TX 2360 B
+awg_kz:   RX 476 B, TX 54928 B
+awg_lu:   RX 428 B, TX 59813 B
+```
+
+The repeated LU ICMP loss is treated as provider/path quality because the tunnel remains established and exchanges traffic. It is not an autostart, routing or netifd failure.
+
+## AWG phase result
+
+The AWG layer is now validated end-to-end on real hardware:
+
+- exact-ABI AWG3 kernel module;
+- custom AWG3 userspace tools;
+- full AWG3 WARP profile;
+- two Surfshark profiles;
+- three concurrent tunnels;
+- netifd-owned lifecycle;
+- endpoint host dependencies pinned to WAN;
+- no provider default route injected into the main routing table;
+- automatic recovery across reboot.
+
+The next phase is Podkop + sing-box policy routing, using the already-working `awg_warp`, `awg_kz`, and `awg_lu` interfaces as Podkop VPN outbounds.
