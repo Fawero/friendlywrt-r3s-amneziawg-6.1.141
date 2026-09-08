@@ -31,10 +31,10 @@ define Build/Prepare
 endef
 
 define Build/Compile
+	CFLAGS="$(TARGET_CFLAGS)" \
+	LDFLAGS="$(TARGET_LDFLAGS)" \
 	$(MAKE) -C $(PKG_BUILD_DIR)/src \
 		CC="$(TARGET_CC)" \
-		CFLAGS="$(TARGET_CFLAGS)" \
-		LDFLAGS="$(TARGET_LDFLAGS)" \
 		PLATFORM=linux \
 		RUNSTATEDIR=/var/run \
 		WITH_BASHCOMPLETION=no \
