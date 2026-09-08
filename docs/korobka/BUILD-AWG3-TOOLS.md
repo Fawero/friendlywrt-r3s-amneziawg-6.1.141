@@ -283,12 +283,50 @@ default via 192.168.88.10 dev eth0 proto static src 192.168.88.15
 
 This confirms that provider `AllowedIPs = 0.0.0.0/0` is kept inside the AWG peer configuration and is not injected into the main routing table by netifd.
 
+## Simultaneous three-tunnel traffic — SUCCESS
+
+All three netifd-managed AWG interfaces were exercised concurrently while remaining up.
+
+Endpoint host dependencies were present in the main table and all resolved through the physical WAN:
+
+```text
+162.159.195.1 via 192.168.88.10 dev eth0
+217.9.250.83 via 192.168.88.10 dev eth0
+185.153.151.149 via 192.168.88.10 dev eth0
+```
+
+Parallel ICMP results to `1.1.1.1`:
+
+```text
+awg_warp: 5 transmitted, 5 received, 0% loss
+awg_kz:   5 transmitted, 5 received, 0% loss
+awg_lu:   5 transmitted, 4 received, 20% loss
+```
+
+The Luxembourg profile still had a valid concurrent handshake and bidirectional transfer counters. The single lost ICMP packet is treated as transient path quality, not tunnel failure, because the interface remained up and exchanged traffic.
+
+Concurrent transfer state:
+
+```text
+awg_warp: RX 672 B, TX 2623 B
+awg_kz:   RX 732 B, TX 54090 B
+awg_lu:   RX 604 B, TX 57454 B
+```
+
+All three had current handshake timestamps and the expected provider endpoints. The system default route remained unchanged before and after the parallel test:
+
+```text
+default via 192.168.88.10 dev eth0 proto static src 192.168.88.15
+```
+
+This confirms that the three provider tunnels can coexist and carry traffic concurrently without taking ownership of the system default route.
+
 ## Next step
 
-The ABI/userspace/provider/netifd integration phase is complete. Next:
+The ABI/userspace/provider/netifd/concurrent-traffic integration phase is complete. Next:
 
-1. generate simultaneous traffic through `awg_warp`, `awg_kz`, and `awg_lu` while all three remain up;
-2. confirm fresh handshakes and transfer counters for all three concurrently;
-3. enable UCI `auto=1` for all three;
-4. reboot the NanoPi and validate that all three return automatically while the WAN/default route stays intact;
+1. enable UCI `auto=1` for `awg_warp`, `awg_kz`, and `awg_lu`;
+2. reboot the NanoPi;
+3. validate that all three interfaces return automatically with correct addresses and endpoint host routes;
+4. confirm fresh handshakes/traffic after reboot while the WAN/default route stays intact;
 5. then install and integrate Podkop/sing-box policy routing.
