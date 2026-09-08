@@ -39,18 +39,54 @@ if grep -Eq '^[[:space:]]*(PreUp|PostUp|PreDown|PostDown)[[:space:]]*=' "$CONF";
     echo "WARNING: lifecycle hooks are present in the imported config; they will be ignored"
 fi
 
+# Build a sanitized setconf file:
+# - remove wg-quick/network-manager-only fields;
+# - never execute lifecycle hooks;
+# - force AdvancedSecurity=on for each AWG peer in this AWG3 test harness.
 umask 077
 awk '
+function flush_peer() {
+    if (in_peer && !have_advanced)
+        print "AdvancedSecurity = on"
+}
 {
     l = tolower($0)
     if (l ~ /^[ \t]*(address|dns|mtu|table|preup|postup|predown|postdown)[ \t]*=/)
         next
+
+    if ($0 ~ /^[[:space:]]*\[Peer\][[:space:]]*$/) {
+        flush_peer()
+        print
+        in_peer = 1
+        have_advanced = 0
+        next
+    }
+
+    if ($0 ~ /^[[:space:]]*\[/) {
+        flush_peer()
+        in_peer = 0
+        have_advanced = 0
+        print
+        next
+    }
+
+    if (in_peer && l ~ /^[ \t]*advancedsecurity[ \t]*=/) {
+        if (!have_advanced)
+            print "AdvancedSecurity = on"
+        have_advanced = 1
+        next
+    }
+
     print
+}
+END {
+    flush_peer()
 }
 ' "$CONF" > "$SAN"
 
 SRC4=""
 SRC6=""
+ADDR_LIST=""
 OLDIFS="$IFS"
 IFS=','
 for raw in $ADDRS; do
@@ -66,7 +102,7 @@ for raw in $ADDRS; do
             [ -n "$SRC4" ] || SRC4="${addr%%/*}"
             ;;
     esac
-    ADDR_LIST="${ADDR_LIST:-} $addr"
+    ADDR_LIST="$ADDR_LIST $addr"
 done
 IFS="$OLDIFS"
 
@@ -74,7 +110,7 @@ ip link del "$IFACE" 2>/dev/null || true
 ip link add "$IFACE" type amneziawg
 awg setconf "$IFACE" "$SAN"
 
-for addr in ${ADDR_LIST:-}; do
+for addr in $ADDR_LIST; do
     ip addr add "$addr" dev "$IFACE"
 done
 ip link set mtu "$MTU" dev "$IFACE"
@@ -89,6 +125,7 @@ echo "interface=$IFACE"
 echo "addresses=$ADDRS"
 echo "mtu=$MTU"
 echo "test_ip=$TEST_IP"
+echo "advanced_security=forced-on-for-each-peer"
 echo
 echo "===== LINK ====="
 ip -details link show "$IFACE"
