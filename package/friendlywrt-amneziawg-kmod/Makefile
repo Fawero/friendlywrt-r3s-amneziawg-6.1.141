@@ -11,7 +11,6 @@ define Package/friendlywrt-amneziawg-kmod
   CATEGORY:=Network
   TITLE:=AmneziaWG 3.1 kernel module for FriendlyWrt NanoPi R3S/LTS
   URL:=https://github.com/amnezia-vpn/amneziawg-linux-kernel-module
-  PKG_FLAGS:=nonshared
 endef
 
 define Package/friendlywrt-amneziawg-kmod/description
@@ -19,6 +18,18 @@ define Package/friendlywrt-amneziawg-kmod/description
  NanoPi R3S/R3S LTS runtime kernel 6.1.141 ABI. This package intentionally
  does not use OpenWrt KernelPackage dependencies because FriendlyWrt 25.12.2
  on this device runs kernel 6.1.141 while its APK metadata references 6.12.74.
+endef
+
+# OpenWrt's package dependency scanner sees imported kernel symbols as .ko
+# library dependencies. On this FriendlyWrt image those dependencies are
+# provided by the real runtime kernel 6.1.141, while the SDK package metadata
+# describes kernel 6.12.74. Declare exactly the runtime-provided modules so the
+# checker remains enabled without introducing false 6.12.74 kmod dependencies.
+define Package/friendlywrt-amneziawg-kmod/extra_provides
+	echo ip6_udp_tunnel.ko;
+	echo libchacha20poly1305.ko;
+	echo libcurve25519-generic.ko;
+	echo udp_tunnel.ko;
 endef
 
 # The module is cross-built separately against the exact FriendlyARM 6.1.141
