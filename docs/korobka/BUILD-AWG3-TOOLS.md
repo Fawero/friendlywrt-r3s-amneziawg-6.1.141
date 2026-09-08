@@ -68,13 +68,91 @@ This can report a false failure: `grep -q` exits immediately after finding a mar
 
 The verifier was fixed to write `strings` output to a file first and then run `grep -Fq` against that file.
 
-## Next runtime validation
+## Runtime validation on NanoPi R3S LTS — SUCCESS
 
-Before installing on the NanoPi R3S LTS, verify that the existing FriendlyWrt userspace provides:
+The package was installed on the real NanoPi R3S LTS running FriendlyWrt 25.12.2 with runtime kernel `6.1.141` and the already-tested custom `amneziawg.ko` module loaded.
+
+Pre-install checks confirmed:
 
 ```text
-/lib/libgcc_s.so.1
-/lib/ld-musl-aarch64.so.1
+kernel: 6.1.141
+/lib/ld-musl-aarch64.so.1 -> libc.so
+/lib/libgcc_s.so.1 present
+amneziawg module loaded
+APK SHA256: 428953ed20eeacf6fd7c9cf361a4b51eb33e8200249be0038d2ab3ee512736cf
 ```
 
-Then install the local APK with `apk --allow-untrusted add`, confirm `awg` runs, and validate userspace/kernel communication against the already-tested `amneziawg.ko` on kernel 6.1.141.
+Installation completed successfully:
+
+```text
+(1/1) Installing amneziawg-tools (3.1.20260812-r1)
+Executing amneziawg-tools-3.1.20260812-r1.post-install
+OK
+```
+
+Installed runtime binary:
+
+```text
+/usr/bin/awg
+amneziawg-tools v3.1.20260812 - https://amnezia.org
+```
+
+The packaged build information on-device correctly reports:
+
+```text
+package=amneziawg-tools
+package_version=3.1.20260812-r1
+upstream_commit=ee0f0a9aa34ff0a0da4b3433b9512781cfe02843
+target=openwrt-25.12.2-rockchip-armv8
+target_arch=aarch64_generic
+libc=musl
+awg_quick_included=no
+netifd_helper_included=no
+```
+
+Userspace-to-kernel netlink communication was then validated end-to-end:
+
+1. Created an `amneziawg` interface with `ip link add awg-test type amneziawg`.
+2. `awg show awg-test` successfully read the empty interface and reported AWG 3.1 fields (`random trailers`, `disable cookies`).
+3. `awg genkey` generated a private key.
+4. `awg set awg-test private-key /tmp/awg-test.key` successfully configured the kernel interface through netlink.
+5. `awg show awg-test` read the configured public key back from the kernel.
+6. `awg pubkey < /tmp/awg-test.key` produced the same public key, confirming correct key handling.
+7. The test interface was deleted cleanly.
+
+Observed public key in this disposable runtime test:
+
+```text
+Lzu/+Su8GM7XjMTWsf5AHbs8ZIBoMLkNe68feLgzED8=
+```
+
+This test key was generated only for the disposable `awg-test` interface and removed during cleanup; it is not a production or provider key.
+
+## Confirmed compatibility baseline
+
+The following combination is now confirmed working on real hardware:
+
+```text
+FriendlyWrt: 25.12.2 r32802-f505120278
+runtime kernel: 6.1.141
+AWG kernel source tag: v3.1.20260906
+AWG kernel internal version: 3.1.20260812
+AWG kernel module APK: friendlywrt-amneziawg-kmod-3.1.20260906-r1
+AWG userspace tools: amneziawg-tools-3.1.20260812-r1
+userspace arch: aarch64_generic
+userspace libc: musl
+```
+
+Confirmed on the NanoPi R3S LTS:
+
+- kernel module loads;
+- `amneziawg` link type works;
+- `awg` binary runs;
+- `awg` reads AWG 3.1 interface state;
+- `awg` writes configuration to the AWG kernel module through generic netlink;
+- private/public key operations work;
+- test interface create/configure/read/delete lifecycle works.
+
+## Next step
+
+The next functional test is no longer basic ABI/userspace compatibility. It is importing a real provider AWG/WG client configuration and validating an actual handshake and tunneled traffic. After that, integrate the interface lifecycle with netifd/Korobka and then Podkop/sing-box policy routing.
