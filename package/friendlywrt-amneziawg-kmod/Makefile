@@ -25,11 +25,10 @@ endef
 # provided by the real runtime kernel 6.1.141, while the SDK package metadata
 # describes kernel 6.12.74. Declare exactly the runtime-provided modules so the
 # checker remains enabled without introducing false 6.12.74 kmod dependencies.
+# Keep this as one shell command: package-pack.mk injects extra_provides inside
+# an already-open parenthesized shell block.
 define Package/friendlywrt-amneziawg-kmod/extra_provides
-	echo ip6_udp_tunnel.ko;
-	echo libchacha20poly1305.ko;
-	echo libcurve25519-generic.ko;
-	echo udp_tunnel.ko;
+	printf '%s\n' ip6_udp_tunnel.ko libchacha20poly1305.ko libcurve25519-generic.ko udp_tunnel.ko;
 endef
 
 # The module is cross-built separately against the exact FriendlyARM 6.1.141
