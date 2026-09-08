@@ -1,0 +1,31 @@
+# Local runtime, owner data and unredacted diagnostics must stay out of Git.
+.runtime/
+secrets/
+private/
+owner-profiles/
+backups/
+audit-output/
+*.private
+*.key
+*.pem
+*.p12
+*.pfx
+*.backup
+.env
+.env.*
+!.env.example
+
+# Raw images and personal exports are not source artifacts.
+*.img
+*.img.gz
+*.img.xz
+*.img.zst
+*.qcow2
+
+# WireGuard/provider configs: allow only reviewed templates.
+*.conf
+!*.example.conf
+!*.template.conf
+
+# Repository-specific references such as kernel-*.config remain tracked.
+# Ignore rules do not protect secrets already tracked or force-added.
