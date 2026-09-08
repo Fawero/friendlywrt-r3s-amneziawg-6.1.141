@@ -11,6 +11,7 @@ define Package/friendlywrt-amneziawg-kmod
   CATEGORY:=Network
   TITLE:=AmneziaWG 3.1 kernel module for FriendlyWrt NanoPi R3S/LTS
   URL:=https://github.com/amnezia-vpn/amneziawg-linux-kernel-module
+  PKG_FLAGS:=nonshared
 endef
 
 define Package/friendlywrt-amneziawg-kmod/description
