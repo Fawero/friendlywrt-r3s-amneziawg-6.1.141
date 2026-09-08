@@ -141,8 +141,13 @@ echo '--- ELF dynamic section ---'
 readelf -d "$AWG_BIN" | grep -E 'NEEDED|RUNPATH|RPATH' || true
 
 log 'VERIFY AWG 3.1 MARKERS IN PACKED BINARY'
+# Do not use `strings "$AWG_BIN" | grep -q ...` under `set -o pipefail`:
+# grep -q may exit as soon as it finds a marker, causing strings(1) to receive
+# SIGPIPE and the otherwise successful pipeline to be reported as a failure.
+AWG_STRINGS="$VERIFY_DIR/awg.strings"
+strings "$AWG_BIN" > "$AWG_STRINGS"
 for marker in header-protection-key content-padding-addition random-trailers disable-cookies; do
-    strings "$AWG_BIN" | grep -Fq "$marker" || fail "packed awg binary missing marker: $marker"
+    grep -Fq "$marker" "$AWG_STRINGS" || fail "packed awg binary missing marker: $marker"
     echo "$marker: OK"
 done
 
