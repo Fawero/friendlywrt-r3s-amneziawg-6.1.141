@@ -18,6 +18,7 @@ SDK_DIR="$WORK/sdk"
 PKG_SRC="$REPO_DIR/package/friendlywrt-amneziawg-kmod"
 PKG_DST="$SDK_DIR/package/friendlywrt-amneziawg-kmod"
 OUT="$WORK/output"
+VERIFY_DIR="$WORK/verify-root"
 
 log() { printf '\n===== %s =====\n' "$*"; }
 fail() { echo "ERROR: $*" >&2; exit 1; }
@@ -108,15 +109,48 @@ cp -f "$APK" "$OUT/"
 APK_OUT="$OUT/$(basename "$APK")"
 sha256sum "$APK_OUT" | tee "$APK_OUT.sha256"
 
-log 'APK METADATA'
 APK_TOOL="$SDK_DIR/staging_dir/host/bin/apk"
-if [ -x "$APK_TOOL" ]; then
-    "$APK_TOOL" --allow-untrusted info --contents "$APK_OUT" || true
-fi
+[ -x "$APK_TOOL" ] || fail "SDK apk tool not found: $APK_TOOL"
+
+log 'APK METADATA'
+ADB_DUMP="$OUT/$(basename "$APK_OUT").adbdump.json"
+"$APK_TOOL" adbdump --format json "$APK_OUT" > "$ADB_DUMP"
+test -s "$ADB_DUMP" || fail 'apk adbdump returned empty metadata'
+grep -q 'friendlywrt-amneziawg-kmod' "$ADB_DUMP" || fail 'package name missing from APK metadata'
+grep -q '6.1.141' "$ADB_DUMP" || fail 'runtime kernel guard is not visible in APK metadata/scripts'
+
+log 'EXTRACT / VERIFY APK'
+rm -rf "$VERIFY_DIR"
+mkdir -p "$VERIFY_DIR"
+"$APK_TOOL" extract --allow-untrusted --destination "$VERIFY_DIR" "$APK_OUT"
+
+PACKED_MODULE="$VERIFY_DIR/lib/modules/6.1.141/amneziawg.ko"
+PACKED_MODULES_D="$VERIFY_DIR/etc/modules.d/30-amneziawg"
+PACKED_INFO="$VERIFY_DIR/usr/share/korobka/amneziawg-build-info.txt"
+
+test -s "$PACKED_MODULE" || fail 'packed amneziawg.ko missing'
+test -s "$PACKED_MODULES_D" || fail 'packed /etc/modules.d/30-amneziawg missing'
+test -s "$PACKED_INFO" || fail 'packed build-info missing'
+
+grep -qx 'amneziawg' "$PACKED_MODULES_D" || fail 'modules.d entry is invalid'
+grep -qx "runtime_kernel=$EXPECTED_KREL" "$PACKED_INFO" || fail 'build-info runtime kernel mismatch'
+grep -qx "module_sha256=$EXPECTED_MODULE_SHA256" "$PACKED_INFO" || fail 'build-info module SHA mismatch'
+
+PACKED_SHA="$(sha256sum "$PACKED_MODULE" | awk '{print $1}')"
+echo "packed_module_sha256=$PACKED_SHA"
+[ "$PACKED_SHA" = "$EXPECTED_MODULE_SHA256" ] || fail 'packed module SHA256 mismatch'
+
+PACKED_VM="$(modinfo -F vermagic "$PACKED_MODULE" | sed 's/[[:space:]]*$//')"
+PACKED_VER="$(modinfo -F version "$PACKED_MODULE" | sed 's/[[:space:]]*$//')"
+echo "packed_module_version=$PACKED_VER"
+echo "packed_vermagic=$PACKED_VM"
+[ "$PACKED_VM" = "$EXPECTED_VERMAGIC" ] || fail 'packed module vermagic mismatch'
 
 log 'SUCCESS'
 echo "apk=$APK_OUT"
 echo "apk_sha256=$(awk '{print $1}' "$APK_OUT.sha256")"
+echo "apk_metadata=$ADB_DUMP"
+echo "verified_root=$VERIFY_DIR"
 echo "module_sha256=$MODULE_SHA"
 echo "runtime_kernel=$EXPECTED_KREL"
 echo "vermagic=$VM"
