@@ -61,7 +61,6 @@ echo "awg_commit=$AWG_COMMIT"
 git -C "$AWG" log -1 --decorate --oneline
 
 log "SOURCE COMPATIBILITY SCAN"
-# No match is a valid scan result. Wrap grep so pipefail does not terminate the build.
 TIMER_SRC_COUNT="$({ grep -RIlE '\b(timer_delete|timer_delete_sync)\b' "$AWG/src" --include='*.c' --include='*.h' 2>/dev/null || true; } | wc -l)"
 NLA_SRC_COUNT="$({ grep -RIlE '\bnla_put_uint[[:space:]]*\(' "$AWG/src" --include='*.c' --include='*.h' 2>/dev/null || true; } | wc -l)"
 
@@ -74,6 +73,35 @@ grep -nE '(^|[^A-Za-z0-9_])(timer_delete|timer_delete_sync|del_timer|del_timer_s
 
 echo "kernel nla_put_uint declaration:"
 grep -RInE '\bnla_put_uint[[:space:]]*\(' "$KERNEL/include" --include='*.h' 2>/dev/null | head -20 || true
+
+log "APPLY KERNEL 6.1 COMPATIBILITY"
+# Linux 6.1 exposes del_timer()/del_timer_sync(); newer kernels renamed these to
+# timer_delete()/timer_delete_sync(). Apply the same narrow call-site patch that
+# was validated previously for the AWG2 build. Do not touch compat headers.
+if ! grep -Eq '(^|[^A-Za-z0-9_])timer_delete[[:space:]]*\(' "$KERNEL/include/linux/timer.h"; then
+    grep -Eq '(^|[^A-Za-z0-9_])del_timer[[:space:]]*\(' "$KERNEL/include/linux/timer.h" \
+        || fail "ядро не содержит ни timer_delete(), ни del_timer()"
+
+    if [ "$TIMER_SRC_COUNT" -gt 0 ]; then
+        echo "Applying timer compatibility patch: timer_delete* -> del_timer*"
+        find "$AWG/src" -type f \( -name '*.c' -o -name '*.h' \) -print0 | \
+            xargs -0 sed -i \
+                -e 's/\<timer_delete_sync\>/del_timer_sync/g' \
+                -e 's/\<timer_delete\>/del_timer/g'
+    else
+        echo "No new timer API calls found in AWG source; patch not needed."
+    fi
+else
+    echo "Kernel provides timer_delete(); patch not needed."
+fi
+
+echo "--- compatibility diff ---"
+git -C "$AWG" diff -- src || true
+
+# Guard against accidental broad edits.
+if ! git -C "$AWG" diff --quiet -- src/compat/compat.h; then
+    fail "compat.h был изменён, хотя должен оставаться upstream-чистым"
+fi
 
 log "CLEAN EXTERNAL MODULE"
 make -C "$KERNEL" \
