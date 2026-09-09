@@ -54,7 +54,7 @@ cleanup_files() {
 
 cleanup_firewall() {
     uci -q delete "firewall.$FIREWALL_SECTION" 2>/dev/null || true
-    uci commit firewall
+    uci commit firewall >/dev/null 2>&1 || true
     /etc/init.d/firewall reload >/dev/null 2>&1 || true
 }
 
@@ -176,10 +176,26 @@ enable_session() {
     uci set "firewall.$FIREWALL_SECTION.family=ipv4"
     uci set "firewall.$FIREWALL_SECTION.dest_port=$PORT"
     uci set "firewall.$FIREWALL_SECTION.target=ACCEPT"
-    uci commit firewall
-    /etc/init.d/firewall reload
+    uci commit firewall >/dev/null 2>&1 || {
+        cleanup_files
+        fail "unable to commit support firewall rule"
+    }
 
-    /etc/init.d/korobka-support restart
+    if ! /etc/init.d/firewall reload >/dev/null 2>&1; then
+        cleanup_firewall
+        cleanup_files
+        fail "unable to reload firewall for support session"
+    fi
+
+    # Use explicit stop/start instead of restart. On a first session procd has no
+    # existing service instance; restart may emit a harmless `service delete ... Not found`
+    # line, which would corrupt the JSON-only stdout contract expected by rpcd.
+    /etc/init.d/korobka-support stop >/dev/null 2>&1 || true
+    if ! /etc/init.d/korobka-support start >/dev/null 2>&1; then
+        cleanup_firewall
+        cleanup_files
+        fail "unable to start support service"
+    fi
     sleep 1
 
     if ! netstat -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${PORT}$"; then
