@@ -3,6 +3,7 @@ set -eu
 
 ROOT="$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)"
 APP="$ROOT/luci-app-korobka"
+RUNTIME="$ROOT/rootfs/usr/bin"
 
 fail() {
     echo "ERROR: $*" >&2
@@ -26,15 +27,20 @@ rpc_must_succeed() {
 
 [ -d "$APP/htdocs" ] || fail "luci-app-korobka source directory not found"
 [ -d "$APP/root" ] || fail "luci-app-korobka root directory not found"
-[ -f "$ROOT/rootfs/usr/bin/korobka-ui-status" ] || fail "korobka-ui-status missing"
 
-for cmd in jq qrencode ucode ubus; do
+for f in \
+    "$RUNTIME/korobka-public-access" \
+    "$RUNTIME/korobka-endpoint" \
+    "$RUNTIME/korobka-ui-status"; do
+    [ -f "$f" ] || fail "runtime source missing: $f"
+    sh -n "$f" || fail "runtime source syntax error: $f"
+done
+
+for cmd in jq qrencode ucode ubus curl timeout; do
     command -v "$cmd" >/dev/null 2>&1 || fail "required command missing: $cmd"
 done
 
 for cmd in \
-    /usr/bin/korobka-public-access \
-    /usr/bin/korobka-endpoint \
     /usr/bin/korobka-wg-peer \
     /usr/bin/korobka-wg-client \
     /usr/bin/korobka-mtg-access; do
@@ -70,7 +76,10 @@ cp -f "$APP/htdocs/luci-static/resources/view/korobka/access.js" /www/luci-stati
 cp -f "$APP/root/usr/share/luci/menu.d/luci-app-korobka.json" /usr/share/luci/menu.d/luci-app-korobka.json
 cp -f "$APP/root/usr/share/rpcd/acl.d/luci-app-korobka.json" /usr/share/rpcd/acl.d/luci-app-korobka.json
 cp -f "$APP/root/usr/share/rpcd/ucode/luci.korobka" /usr/share/rpcd/ucode/luci.korobka
-cp -f "$ROOT/rootfs/usr/bin/korobka-ui-status" /usr/bin/korobka-ui-status
+
+cp -f "$RUNTIME/korobka-public-access" /usr/bin/korobka-public-access
+cp -f "$RUNTIME/korobka-endpoint" /usr/bin/korobka-endpoint
+cp -f "$RUNTIME/korobka-ui-status" /usr/bin/korobka-ui-status
 
 chmod 0644 \
     /www/luci-static/resources/view/korobka/*.js \
@@ -78,10 +87,20 @@ chmod 0644 \
     /usr/share/rpcd/acl.d/luci-app-korobka.json
 chmod 0755 \
     /usr/share/rpcd/ucode/luci.korobka \
+    /usr/bin/korobka-public-access \
+    /usr/bin/korobka-endpoint \
     /usr/bin/korobka-ui-status
 
+sh -n /usr/bin/korobka-public-access || fail "korobka-public-access syntax error"
+sh -n /usr/bin/korobka-endpoint || fail "korobka-endpoint syntax error"
 sh -n /usr/bin/korobka-ui-status || fail "korobka-ui-status syntax error"
-/usr/bin/korobka-ui-status | jq -e . >/dev/null || fail "korobka-ui-status does not return JSON"
+
+# One foreground probe seeds the cache during installation. Normal LuCI page loads
+# use cached/local state and never wait for Internet/UPnP/NAT-PMP probes.
+/usr/bin/korobka-public-access refresh | jq -e . >/dev/null \
+    || fail "initial public access refresh failed"
+/usr/bin/korobka-ui-status | jq -e . >/dev/null \
+    || fail "korobka-ui-status does not return JSON"
 
 /etc/init.d/rpcd restart
 sleep 2
