@@ -4,6 +4,7 @@
 'require view';
 
 const callStatus = rpc.declare({ object: 'luci.korobka', method: 'status' });
+const callRefreshAccess = rpc.declare({ object: 'luci.korobka', method: 'refresh_access' });
 const callSetManual = rpc.declare({ object: 'luci.korobka', method: 'set_manual_forward', params: [ 'confirmed' ] });
 
 function kv(label, value) {
@@ -20,9 +21,34 @@ function badge(ok, text) {
 	}, text);
 }
 
+function probeText(access) {
+	if (!access) return '—';
+	if (access.probe_pending) return _('Обновляется в фоне');
+	if (access.observed_at) return new Date(Number(access.observed_at) * 1000).toLocaleString();
+	return _('Ещё не выполнялась');
+}
+
 return view.extend({
 	load: function() {
 		return callStatus();
+	},
+
+	handleRefresh: function() {
+		ui.showModal(_('Проверка внешнего доступа'), [
+			E('p', {'class': 'spinning'}, _('Проверяем public IPv4, UPnP и NAT-PMP…'))
+		]);
+
+		return callRefreshAccess().then(function(res) {
+			ui.hideModal();
+			if (!res || res.error) {
+				ui.addNotification(null, E('p', {}, res && res.error ? res.error : _('Диагностика не выполнена')), 'error');
+				return;
+			}
+			window.location.reload();
+		}).catch(function(err) {
+			ui.hideModal();
+			ui.addNotification(null, E('p', {}, String(err)), 'error');
+		});
 	},
 
 	handleConfirm: function(value) {
@@ -51,17 +77,26 @@ return view.extend({
 		const manual = !!endpoint.manual_forward_confirmed;
 
 		const nodes = [
-			E('h2', {}, _('Внешний доступ')),
-			E('p', {}, _('Коробка использует только public IPv4. DDNS в продукт не входит. Private WAN сам по себе не считается доказанным CGNAT.')),
-			E('div', {'class': 'cbi-section'}, [
+			E('div', {'style': 'display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap'}, [
+				E('div', {}, [
+					E('h2', {'style': 'margin-bottom:4px'}, _('Внешний доступ')),
+					E('p', {'style': 'margin:0'}, _('Коробка использует только public IPv4. DDNS в продукт не входит. Private WAN сам по себе не считается доказанным CGNAT.'))
+				]),
+				E('button', {
+					'class': 'btn cbi-button cbi-button-action',
+					'click': this.handleRefresh.bind(this)
+				}, _('Перепроверить сеть'))
+			]),
+			E('div', {'class': 'cbi-section', 'style': 'margin-top:16px'}, [
 				E('h3', {}, _('Диагностика')),
 				E('div', {'style': 'margin-bottom:10px'}, badge(!!endpoint.ready, endpoint.ready ? _('Endpoint готов') : _('Требует настройки'))),
 				kv(_('WAN IPv4'), access.wan_ipv4),
 				kv(_('Public IPv4'), access.public_ipv4),
 				kv(_('Тип WAN'), access.wan_scope),
 				kv(_('Режим'), access.mode),
-				kv(_('UPnP IGD'), access.upnp && access.upnp.available ? _('Доступен') : _('Недоступен')),
-				kv(_('NAT-PMP'), access.natpmp && access.natpmp.available ? _('Доступен') : _('Недоступен')),
+				kv(_('UPnP IGD'), access.upnp && access.upnp.available ? _('Доступен') : (access.probe_pending ? _('Проверяется') : _('Недоступен'))),
+				kv(_('NAT-PMP'), access.natpmp && access.natpmp.available ? _('Доступен') : (access.probe_pending ? _('Проверяется') : _('Недоступен'))),
+				kv(_('Последняя диагностика'), probeText(access)),
 				kv(_('Причина readiness'), endpoint.reason)
 			]),
 			E('div', {'class': 'cbi-section'}, [
@@ -72,7 +107,13 @@ return view.extend({
 			])
 		];
 
-		if (access.mode === 'upstream_nat_no_automap') {
+		if (access.probe_pending || access.mode === 'probing') {
+			nodes.push(E('div', {'class': 'cbi-section warning'}, [
+				E('strong', {}, _('Диагностика обновляется. ')),
+				_('Обычные страницы не ждут сетевых timeout-ов. Для немедленного результата нажмите «Перепроверить сеть».')
+			]));
+		}
+		else if (access.mode === 'upstream_nat_no_automap') {
 			nodes.push(E('div', {'class': 'cbi-section warning'}, [
 				E('h3', {}, _('Нужен ручной port-forward')),
 				E('p', {}, _('На вышестоящем маршрутизаторе автоматический проброс недоступен. Направьте только эти два порта на WAN IPv4 Коробки:')),
