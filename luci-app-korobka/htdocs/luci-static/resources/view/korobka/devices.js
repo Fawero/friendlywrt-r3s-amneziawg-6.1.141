@@ -97,7 +97,8 @@ return view.extend({
 
 	render: function(data) {
 		const status = data[0] || {};
-		const peers = Array.isArray(data[1]) ? data[1] : [];
+		const peerReply = data[1] || {};
+		const peers = Array.isArray(peerReply.peers) ? peerReply.peers : [];
 		const endpoint = status.endpoint || {};
 		const ready = !!(endpoint.wireguard && endpoint.wireguard.ready);
 
