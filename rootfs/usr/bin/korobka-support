@@ -9,6 +9,7 @@ STATE="$BASE/state.json"
 BUNDLE="$BASE/bundle.json"
 PRIVATE_KEY="$BASE/id_ed25519"
 PUBLIC_KEY="$BASE/id_ed25519.pub"
+PIDFILE="/var/run/korobka-support-dropbear.pid"
 FIREWALL_SECTION="korobka_support"
 DEFAULT_TTL=86400
 MAX_TTL=86400
@@ -48,6 +49,44 @@ public_state() {
     /usr/bin/korobka-public-access status 2>/dev/null || echo '{}'
 }
 
+support_dropbear_pids() {
+    for PROC in /proc/[0-9]*; do
+        [ -r "$PROC/cmdline" ] || continue
+        CMD="$(tr '\000' ' ' < "$PROC/cmdline" 2>/dev/null || true)"
+        case "$CMD" in
+            *"/usr/sbin/dropbear"*"-D $AUTH_DIR"*) basename "$PROC" ;;
+        esac
+    done
+}
+
+stop_listener_sync() {
+    /etc/init.d/korobka-support stop >/dev/null 2>&1 || true
+
+    ROUND=0
+    while [ "$ROUND" -lt 4 ]; do
+        PIDS="$(support_dropbear_pids)"
+        [ -z "$PIDS" ] && break
+
+        for PID in $PIDS; do
+            kill "$PID" 2>/dev/null || true
+        done
+
+        sleep 1
+        ROUND=$((ROUND + 1))
+    done
+
+    PIDS="$(support_dropbear_pids)"
+    if [ -n "$PIDS" ]; then
+        for PID in $PIDS; do
+            kill -9 "$PID" 2>/dev/null || true
+        done
+        sleep 1
+    fi
+
+    rm -f "$PIDFILE"
+    [ -z "$(support_dropbear_pids)" ]
+}
+
 cleanup_files() {
     rm -rf "$BASE"
 }
@@ -61,6 +100,7 @@ cleanup_firewall() {
 cleanup_expired() {
     cleanup_firewall
     cleanup_files
+    rm -f "$PIDFILE"
 }
 
 ensure_not_expired() {
@@ -68,7 +108,7 @@ ensure_not_expired() {
     ENABLED="$(jq -r '.enabled // false' "$STATE" 2>/dev/null || echo false)"
     EXPIRES="$(jq -r '.expires_at // 0' "$STATE" 2>/dev/null || echo 0)"
     if [ "$ENABLED" = true ] && [ "$EXPIRES" -gt 0 ] && [ "$(now)" -ge "$EXPIRES" ]; then
-        /etc/init.d/korobka-support stop >/dev/null 2>&1 || true
+        stop_listener_sync || true
         cleanup_expired
     fi
 }
@@ -106,6 +146,11 @@ enable_session() {
         fail "support session is already enabled"
     fi
 
+    # Clean any orphaned listener/rule left by an interrupted previous session.
+    stop_listener_sync || fail "unable to stop orphaned support listener"
+    cleanup_firewall
+    cleanup_files
+
     TTL="$DEFAULT_TTL"
     if [ -n "$ARG" ]; then
         case "$ARG" in *[!0-9]*) fail "TTL must be an integer" ;; esac
@@ -132,7 +177,9 @@ enable_session() {
     cp "$PUBLIC_KEY" "$AUTH_DIR/authorized_keys"
     chmod 600 "$PRIVATE_KEY" "$PUBLIC_KEY" "$AUTH_DIR/authorized_keys"
 
-    PA="$(/usr/bin/korobka-public-access refresh 2>/dev/null || public_state)"
+    # Enabling support must be fast and must not burn its TTL waiting for external
+    # UPnP/NAT-PMP probes. The explicit network refresh button owns deep probing.
+    PA="$(public_state)"
     MODE="$(echo "$PA" | jq -r '.mode // "unknown"')"
     PUBLIC_IP="$(echo "$PA" | jq -r '.public_ipv4 // empty')"
     WAN_IP="$(echo "$PA" | jq -r '.wan_ipv4 // empty')"
@@ -187,10 +234,6 @@ enable_session() {
         fail "unable to reload firewall for support session"
     fi
 
-    # Use explicit stop/start instead of restart. On a first session procd has no
-    # existing service instance; restart may emit a harmless `service delete ... Not found`
-    # line, which would corrupt the JSON-only stdout contract expected by rpcd.
-    /etc/init.d/korobka-support stop >/dev/null 2>&1 || true
     if ! /etc/init.d/korobka-support start >/dev/null 2>&1; then
         cleanup_firewall
         cleanup_files
@@ -199,7 +242,7 @@ enable_session() {
     sleep 1
 
     if ! netstat -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${PORT}$"; then
-        /etc/init.d/korobka-support stop >/dev/null 2>&1 || true
+        stop_listener_sync || true
         cleanup_firewall
         cleanup_files
         fail "support Dropbear listener did not start"
@@ -209,9 +252,24 @@ enable_session() {
 }
 
 disable_session() {
-    /etc/init.d/korobka-support stop >/dev/null 2>&1 || true
+    PORT=""
+    if [ -s "$STATE" ]; then
+        PORT="$(jq -r '.port // empty' "$STATE" 2>/dev/null || true)"
+    fi
+
+    STOPPED=true
+    stop_listener_sync || STOPPED=false
     cleanup_firewall
     cleanup_files
+
+    if [ "$STOPPED" != true ]; then
+        fail "support Dropbear listener did not stop"
+    fi
+
+    if [ -n "$PORT" ] && netstat -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${PORT}$"; then
+        fail "support port is still listening after disable"
+    fi
+
     jq -n '{ok:true,enabled:false,action:"disabled"}'
 }
 
