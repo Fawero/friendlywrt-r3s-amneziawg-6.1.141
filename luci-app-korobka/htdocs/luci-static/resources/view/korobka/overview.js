@@ -89,6 +89,8 @@ return view.extend({
 		const wg = s.wireguard || {};
 		const mtg = s.mtg || {};
 		const awg = s.awg || {};
+		const local = s.local_management || {};
+		const support = s.support || { enabled: false };
 
 		const callout = endpoint.ready
 			? E('div', {'class': 'korobka-callout korobka-callout-ok'}, [
@@ -111,7 +113,7 @@ return view.extend({
 				E('div', {'class': 'korobka-hero'}, [
 					E('div', {}, [
 						E('h2', {'class': 'korobka-title'}, _('Коробка')),
-						E('div', {'class': 'korobka-subtitle'}, _('Состояние VPN-выходов, входящего WireGuard, Telegram MTProxy и внешнего доступа в одном месте.'))
+						E('div', {'class': 'korobka-subtitle'}, _('Состояние VPN-выходов, входящего WireGuard, Telegram MTProxy и управления Коробкой в одном месте.'))
 					]),
 					E('div', {'class': 'korobka-toolbar'}, [
 						E('button', {
@@ -145,6 +147,30 @@ return view.extend({
 						kv(_('TCP порт'), mtg.listen_port, true),
 						kv(_('Выход'), mtg.outbound, true),
 						kv(_('Candidate'), endpoint.mtg && endpoint.mtg.candidate_endpoint, true)
+					])
+				]),
+				E('h3', {'class': 'korobka-section-title'}, _('Управление Коробкой')),
+				E('div', {'class': 'korobka-grid'}, [
+					card(_('Локальное управление'), badge(!!local.configured, _('Настроено'), _('Не настроено')), [
+						kv(_('Основной адрес'), local.primary_url, true),
+						kv(_('Fallback'), local.fallback_url, true),
+						kv(_('LAN Коробки'), local.lan_ipv4, true),
+						kv(_('DNS alias'), local.fqdn, true)
+					]),
+					E('div', {'class': 'korobka-card'}, [
+						E('div', {'class': 'korobka-card-head'}, [
+							E('h3', {}, _('Техподдержка')),
+							E('span', {'class': 'korobka-badge ' + (support.enabled ? 'korobka-badge-ok' : 'korobka-badge-neutral')}, support.enabled ? _('Включена') : _('Выключена'))
+						]),
+						kv(_('Session ID'), support.session_id, true),
+						kv(_('Случайный порт'), support.port, true),
+						kv(_('Внешняя доступность'), support.reachable ? _('Подтверждена') : _('Не подтверждена')),
+						E('div', {'style': 'margin-top:12px'}, [
+							E('button', {
+								'class': 'btn cbi-button korobka-btn korobka-btn-soft',
+								'click': function() { window.location.href = L.url('admin/korobka/support'); }
+							}, support.enabled ? _('Открыть сессию') : _('Открыть техподдержку'))
+						])
 					])
 				]),
 				E('h3', {'class': 'korobka-section-title'}, _('Исходящие VPN-выходы')),
