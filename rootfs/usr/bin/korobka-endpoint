@@ -28,6 +28,7 @@ case "$access_mode" in
     upstream_nat_natpmp) reason="natpmp_mapping_required" ;;
     cgnat_suspected_no_automap) reason="cgnat_or_nested_nat_suspected" ;;
     public_wan_address_mismatch) reason="public_address_mismatch" ;;
+    probing) reason="public_access_probe_pending" ;;
     *) reason="public_access_unknown" ;;
 esac
 
@@ -46,6 +47,8 @@ if [ -n "$public_ip" ]; then
 fi
 
 if [ "$manual_confirmed" = "1" ]; then manual_json=true; else manual_json=false; fi
+probe_pending="$(echo "$PA" | jq -r '.probe_pending // false')"
+case "$probe_pending" in true|false) ;; *) probe_pending=false ;; esac
 
 jq -n \
     --arg access_mode "$access_mode" \
@@ -58,6 +61,7 @@ jq -n \
     --arg candidate_mtg "$candidate_mtg" \
     --argjson ready "$ready" \
     --argjson manual_confirmed "$manual_json" \
+    --argjson probe_pending "$probe_pending" \
     --argjson wg_port "$wg_port" \
     --argjson mtg_port "$mtg_port" \
 '{
@@ -69,6 +73,7 @@ jq -n \
     selected_address: (if $public_ipv4 == "" then null else $public_ipv4 end),
     address_source: "public_ipv4",
     manual_forward_confirmed: $manual_confirmed,
+    probe_pending: $probe_pending,
     wireguard: {
         ready: $ready,
         port: $wg_port,
