@@ -169,16 +169,14 @@ enable_session() {
 
     PORT="$(random_port)" || { cleanup_files; fail "unable to allocate random support port"; }
     SESSION="KRBX-$(random_hex 4 | tr 'a-f' 'A-F')"
-    CREATED="$(now)"
-    EXPIRES=$((CREATED + TTL))
 
     ssh-keygen -q -t ed25519 -N '' -C "korobka-support-$SESSION" -f "$PRIVATE_KEY" \
         || { cleanup_files; fail "support key generation failed"; }
     cp "$PUBLIC_KEY" "$AUTH_DIR/authorized_keys"
     chmod 600 "$PRIVATE_KEY" "$PUBLIC_KEY" "$AUTH_DIR/authorized_keys"
 
-    # Enabling support must be fast and must not burn its TTL waiting for external
-    # UPnP/NAT-PMP probes. The explicit network refresh button owns deep probing.
+    # Enabling support must not burn its TTL waiting for external probes.
+    # The explicit network refresh action owns deep UPnP/NAT-PMP probing.
     PA="$(public_state)"
     MODE="$(echo "$PA" | jq -r '.mode // "unknown"')"
     PUBLIC_IP="$(echo "$PA" | jq -r '.public_ipv4 // empty')"
@@ -187,6 +185,31 @@ enable_session() {
         direct_public) REACHABLE=true ;;
         *) REACHABLE=false ;;
     esac
+
+    # Prepare and reload the firewall before the session TTL starts. fw4 reload
+    # may take several seconds on the appliance and must not consume support TTL.
+    uci -q delete "firewall.$FIREWALL_SECTION" 2>/dev/null || true
+    uci set "firewall.$FIREWALL_SECTION=rule"
+    uci set "firewall.$FIREWALL_SECTION.name=KOROBKA-SUPPORT-TEMP"
+    uci set "firewall.$FIREWALL_SECTION.src=wan"
+    uci set "firewall.$FIREWALL_SECTION.proto=tcp"
+    uci set "firewall.$FIREWALL_SECTION.family=ipv4"
+    uci set "firewall.$FIREWALL_SECTION.dest_port=$PORT"
+    uci set "firewall.$FIREWALL_SECTION.target=ACCEPT"
+    uci commit firewall >/dev/null 2>&1 || {
+        cleanup_files
+        fail "unable to commit support firewall rule"
+    }
+
+    if ! /etc/init.d/firewall reload >/dev/null 2>&1; then
+        cleanup_firewall
+        cleanup_files
+        fail "unable to reload firewall for support session"
+    fi
+
+    # TTL starts here: immediately before the support listener is activated.
+    CREATED="$(now)"
+    EXPIRES=$((CREATED + TTL))
 
     jq -n \
         --arg session_id "$SESSION" \
@@ -214,25 +237,6 @@ enable_session() {
         '{type:"korobka-support",version:$version,session_id:$session_id,host:(if $host=="" then null else $host end),port:$port,user:$user,expires_at:$expires_at,network_mode:$network_mode,reachable:$reachable,private_key:$private_key}' \
         > "$BUNDLE"
     chmod 600 "$BUNDLE"
-
-    uci -q delete "firewall.$FIREWALL_SECTION" 2>/dev/null || true
-    uci set "firewall.$FIREWALL_SECTION=rule"
-    uci set "firewall.$FIREWALL_SECTION.name=KOROBKA-SUPPORT-TEMP"
-    uci set "firewall.$FIREWALL_SECTION.src=wan"
-    uci set "firewall.$FIREWALL_SECTION.proto=tcp"
-    uci set "firewall.$FIREWALL_SECTION.family=ipv4"
-    uci set "firewall.$FIREWALL_SECTION.dest_port=$PORT"
-    uci set "firewall.$FIREWALL_SECTION.target=ACCEPT"
-    uci commit firewall >/dev/null 2>&1 || {
-        cleanup_files
-        fail "unable to commit support firewall rule"
-    }
-
-    if ! /etc/init.d/firewall reload >/dev/null 2>&1; then
-        cleanup_firewall
-        cleanup_files
-        fail "unable to reload firewall for support session"
-    fi
 
     if ! /etc/init.d/korobka-support start >/dev/null 2>&1; then
         cleanup_firewall
