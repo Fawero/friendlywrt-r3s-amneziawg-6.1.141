@@ -2,7 +2,31 @@
 
 Дата: 9 сентября 2026 года.
 
-Документ фиксирует следующий крупный продуктовый блок после базового `luci-app-korobka`: временный доступ техподдержки и локальный адрес Коробки в домашней сети.
+Документ фиксирует следующий крупный продуктовый блок после базового `luci-app-korobka`: временный доступ техподдержки и стабильный локальный адрес Коробки.
+
+## 0. Фактическая топология продукта
+
+Базовая схема Коробки:
+
+```text
+Провайдер
+   |
+ [WAN]
+ Коробка
+ [LAN]
+   |
+ [WAN]
+ Домашний роутер
+ [LAN / Wi-Fi]
+   |
+ домашние устройства
+```
+
+Это принципиально важно для обоих сценариев ниже.
+
+- Коробка стоит **до** домашнего роутера и является его upstream gateway.
+- Домашний NAT находится **после** Коробки и не мешает входящему support SSH на WAN Коробки.
+- Домашние клиенты находятся за отдельным routed/NAT сегментом, поэтому mDNS `.local` через домашний роутер по умолчанию не является надёжным zero-config механизмом.
 
 ## 1. Техподдержка
 
@@ -28,9 +52,9 @@
 4. поднимается отдельный Dropbear listener только для support-сессии;
 5. password authentication для support listener отключён;
 6. временный public key добавляется к разрешённым root keys с уникальным session marker;
-7. firewall открывает только случайный support-порт;
+7. firewall открывает только случайный support-порт на WAN;
 8. создаётся TTL 24 часа;
-9. запускается watchdog, который автоматически отключит доступ после expiry;
+9. watchdog автоматически отключает доступ после expiry;
 10. пользователь может отключить доступ вручную в любой момент.
 
 Панель показывает:
@@ -52,21 +76,29 @@ QR support bundle содержит секретный комплект подк�
 
 ### Сетевые режимы
 
-Support manager должен учитывать существующую диагностику `korobka-public-access`.
+Support manager использует существующую диагностику `korobka-public-access`.
 
 #### Direct public WAN
 
-Можно открыть случайный TCP-порт непосредственно на Коробке.
+Если WAN Коробки имеет реальный public IPv4, случайный support-порт открывается непосредственно на Коробке.
 
-#### Upstream NAT + безопасный automap
+Домашний роутер и его NAT в этом сценарии не участвуют: он расположен ниже Коробки.
 
-После реализации ownership/lease renewal support manager сможет временно создать UPnP/NAT-PMP mapping на срок support-сессии.
+#### Provider CGNAT / upstream provider NAT
 
-#### Upstream NAT без automap
+Если провайдер не даёт входящий public IPv4, случайный WAN-порт Коробки из Интернета недоступен независимо от домашнего роутера.
 
-Прямой входящий support SSH сам по себе не заработает без port-forward на домашнем маршрутизаторе. В этом режиме UI не должен создавать ложное ощущение доступности.
+Для production-поддержки в таком режиме нужен reverse-support relay:
 
-Для универсальной поддержки за NAT отдельным следующим этапом нужен reverse-support relay: Коробка инициирует исходящее соединение на наш relay/VPS, а техподдержка подключается к случайному relay-порту. Это предпочтительная production-архитектура для коробок за домашним NAT.
+```text
+Коробка -> исходящее соединение -> Support Relay / VPS <- техподдержка
+```
+
+Это отдельный следующий этап и универсальный fallback для CGNAT.
+
+#### Upstream NAT перед Коробкой
+
+Если в конкретной инсталляции всё же существует отдельный ONT/router перед WAN Коробки, применяются существующие режимы `korobka-public-access`: UPnP/NAT-PMP при безопасном ownership либо ручной port-forward. Но это не базовая продуктовая схема.
 
 ### Безопасность
 
@@ -110,93 +142,141 @@ korobka-support bundle
 
 ## 2. Локальный адрес Коробки
 
-### Решение
+### Почему `korobka.local` больше не основной вариант
 
-Основное zero-config имя продукта:
+Домашние устройства находятся за WAN домашнего роутера, то есть не в одном L2 broadcast domain с LAN Коробки.
+
+Обычный mDNS `.local` через routed/NAT границу домашнего роутера не обязан проходить. Мы не должны требовать от произвольного домашнего роутера mDNS reflector/repeater.
+
+Поэтому основной product hostname для этой топологии:
 
 ```text
-korobka.local
+korobka.home.arpa
 ```
 
-Не использовать `.zbs` как product default. `.local` имеет стандартную mDNS-семантику и поддерживается OpenWrt `umdns`.
+`home.arpa` используется для локального unicast DNS и подходит именно для routed домашней сети.
 
-### Что делаем
+### Стабильный management IP
 
-1. product hostname Коробки — `korobka`;
-2. WAN DHCP client сообщает hostname `korobka` upstream-маршрутизатору как дополнительный best-effort механизм;
-3. `umdns` объявляет `korobka.local`;
-4. объявляются HTTP/HTTPS management services;
-5. LuCI открывается по `http://korobka.local/` / `https://korobka.local/`;
-6. локальный management firewall разрешается на WAN только когда WAN является private/shared local network, а не прямым public WAN;
-7. при переходе WAN в public mode local-WAN management и mDNS advertisement на WAN автоматически отключаются.
+Коробка сама является gateway для WAN домашнего роутера. Поэтому основной fallback — стабильный IP LAN-интерфейса Коробки в transit-сети между Коробкой и домашним роутером.
 
-### Почему не `korobka.home.arpa`
+Предлагаемый product default:
 
-`home.arpa` подходит для локального unicast DNS, но требует участия DNS-сервера домашней сети. Коробка не управляет произвольным домашним маршрутизатором, поэтому zero-config доступ без настройки upstream DNS лучше реализовать через mDNS `korobka.local`.
+```text
+Korobka LAN / management: 192.168.77.1/24
+Home-router WAN:          DHCP из 192.168.77.0/24
+```
 
-В будущем `korobka.home.arpa` можно поддержать как дополнительный alias при наличии интеграции с локальным DNS.
+Тогда устройства за домашним роутером обычно могут открыть:
+
+```text
+http://192.168.77.1/
+https://192.168.77.1/
+```
+
+Трафик идёт через WAN домашнего роутера к его upstream gateway — Коробке.
+
+Конкретная transit-подсеть должна быть конфигурируемой и проверяться на конфликт с домашней LAN-сетью. Нельзя безусловно считать `192.168.77.0/24` свободной во всех инсталляциях.
+
+### DNS-схема
+
+Коробка является upstream DHCP/DNS для WAN домашнего роутера.
+
+Базовая схема:
+
+1. DHCP Коробки выдаёт WAN домашнего роутера:
+   - gateway = LAN IP Коробки;
+   - DNS = LAN IP Коробки;
+2. dnsmasq Коробки содержит локальную запись:
+
+```text
+korobka.home.arpa -> LAN management IP Коробки
+```
+
+3. обычный домашний роутер, работающий как DNS proxy/forwarder, передаёт запрос клиента upstream DNS Коробки;
+4. пользователь открывает:
+
+```text
+https://korobka.home.arpa/
+```
+
+Для остальных DNS-запросов Коробка продолжает использовать свою штатную DNS/Podkop-схему.
+
+### Compatibility fallback
+
+Не все домашние роутеры обязаны использовать DNS, полученный по WAN DHCP. Некоторые могут использовать собственный DoH/DoT или жёстко заданный resolver.
+
+Поэтому UI всегда показывает оба адреса:
+
+```text
+Основной: https://korobka.home.arpa/
+Fallback: https://192.168.77.1/
+```
+
+На первом этапе не перехватывать весь DNS downstream-роутера принудительно. DNS interception можно добавить позднее как отдельную opt-in функцию после проверки совместимости с Podkop и пользовательскими DNS-сценариями.
 
 ### Firewall
 
-На private WAN разрешать только необходимые management-порты из фактической on-link WAN подсети:
+Management LuCI разрешается на LAN-интерфейсе Коробки, который смотрит в WAN домашнего роутера:
 
 ```text
 TCP 80
 TCP 443
-UDP 5353 (mDNS)
 ```
 
-Не разрешать их автоматически на public WAN.
+Это **не WAN провайдера** и не публикация LuCI в Интернет.
 
-Обычный SSH/22 в локальный management block не входит; SSH остаётся отдельной политикой. Временная техподдержка использует свой случайный порт и собственный lifecycle.
+На provider-facing WAN LuCI по умолчанию закрыт.
+
+Обычный SSH/22 в локальный management block не входит; SSH остаётся отдельной политикой. Временная техподдержка использует случайный WAN support-порт и собственный lifecycle.
 
 ### UI
 
 В `Коробка -> Обзор` или отдельном `Управление` показывать:
 
 ```text
-Локальный адрес: https://korobka.local/
-Локальное управление: доступно
-Сеть: private WAN
+Локальное управление
+Основной адрес: https://korobka.home.arpa/
+Fallback IP:    https://192.168.77.1/
+Домашний роутер: подключён к LAN Коробки
 ```
-
-Если mDNS недоступен на клиенте, показывать fallback WAN IPv4.
 
 ## 3. Этапы реализации
 
-### Milestone A — Local Discovery
+### Milestone A — Local Management & DNS
 
-- safe package preflight для `umdns`;
-- hostname `korobka`;
-- advertise на private WAN;
-- conditional management firewall;
-- service discovery HTTP/HTTPS;
-- LuCI status card;
-- desktop/mobile browser test;
-- test WAN private -> public transition.
+- выбрать/настроить transit subnet Коробка -> WAN домашнего роутера;
+- стабильный LAN management IP;
+- DHCP для WAN домашнего роутера;
+- DNS Коробки как WAN DNS downstream-роутера;
+- `korobka.home.arpa` в dnsmasq;
+- LuCI HTTP/HTTPS на LAN Коробки;
+- fallback по management IP;
+- conflict detection для transit subnet;
+- browser test из LAN/Wi-Fi за домашним роутером.
 
 ### Milestone B — Support Access Direct
 
 - `korobka-support` manager;
 - second key-only Dropbear listener;
-- random port;
+- random WAN port;
 - ephemeral key bundle;
 - 24h expiry/watchdog;
 - firewall lifecycle;
 - LuCI toggle/countdown/QR;
 - disable/expiry/reboot tests;
-- direct-public network test.
+- direct-public WAN test.
 
 ### Milestone C — Support Relay
 
-Для production support за обычным домашним NAT:
+Для провайдерского CGNAT / отсутствия входящего public IPv4:
 
 - outbound reverse tunnel from Korobka;
 - our relay/VPS;
 - random external relay port;
 - 24h session TTL;
 - one-time support bundle;
-- no manual router port-forward required.
+- no manual port-forward required.
 
 ## 4. Неприкосновенные правила
 
@@ -204,5 +284,6 @@ UDP 5353 (mDNS)
 - новые packages сначала `apk add --simulate` и abort на любой kernel/kmod dependency;
 - не хранить support private keys в GitHub;
 - не коммитить live IP/session secrets;
-- не превращать временный WAN LuCI rule текущего стенда в production default без private-WAN guard;
+- provider-facing WAN LuCI не открывать по умолчанию;
+- downstream/home management открывать только на LAN Коробки;
 - любой support access должен иметь автоматический expiry.
