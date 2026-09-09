@@ -1,0 +1,68 @@
+#!/bin/sh
+set -eu
+
+BASE="/etc/korobka/support"
+STATE="$BASE/state.json"
+AUTH_DIR="$BASE/auth"
+PIDFILE="/var/run/korobka-support-dropbear.pid"
+
+[ -s "$STATE" ] || exit 0
+
+ENABLED="$(jq -r '.enabled // false' "$STATE")"
+PORT="$(jq -r '.port // 0' "$STATE")"
+EXPIRES="$(jq -r '.expires_at // 0' "$STATE")"
+
+[ "$ENABLED" = true ] || exit 0
+[ "$PORT" -gt 0 ] || exit 1
+[ -s "$AUTH_DIR/authorized_keys" ] || exit 1
+
+NOW="$(date +%s)"
+if [ "$NOW" -ge "$EXPIRES" ]; then
+    /usr/bin/korobka-support expire-cleanup >/dev/null 2>&1 || true
+    exit 0
+fi
+
+CHILD=""
+cleanup_child() {
+    if [ -n "$CHILD" ]; then
+        kill "$CHILD" 2>/dev/null || true
+        wait "$CHILD" 2>/dev/null || true
+    fi
+    rm -f "$PIDFILE"
+}
+trap cleanup_child INT TERM EXIT
+
+/usr/sbin/dropbear \
+    -F \
+    -E \
+    -P "$PIDFILE" \
+    -p "0.0.0.0:$PORT" \
+    -s \
+    -g \
+    -D "$AUTH_DIR" \
+    -j \
+    -k \
+    -K 60 \
+    -T 2 &
+CHILD="$!"
+
+while kill -0 "$CHILD" 2>/dev/null; do
+    NOW="$(date +%s)"
+    if [ "$NOW" -ge "$EXPIRES" ]; then
+        kill "$CHILD" 2>/dev/null || true
+        wait "$CHILD" 2>/dev/null || true
+        CHILD=""
+        rm -f "$PIDFILE"
+        /usr/bin/korobka-support expire-cleanup >/dev/null 2>&1 || true
+        exit 0
+    fi
+
+    LEFT=$((EXPIRES - NOW))
+    if [ "$LEFT" -gt 30 ]; then SLEEP=30; else SLEEP="$LEFT"; fi
+    [ "$SLEEP" -gt 0 ] || SLEEP=1
+    sleep "$SLEEP"
+done
+
+wait "$CHILD" 2>/dev/null || true
+CHILD=""
+exit 0
