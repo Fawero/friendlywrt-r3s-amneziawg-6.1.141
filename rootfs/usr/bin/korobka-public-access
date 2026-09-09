@@ -1,0 +1,131 @@
+#!/bin/sh
+
+WAN_IF="${WAN_IF:-eth0}"
+WG_PORT="${WG_PORT:-51821}"
+MTG_PORT="${MTG_PORT:-8888}"
+ACTION="${1:-status}"
+
+get_state() {
+    wan_ip="$(ip -4 -o addr show dev "$WAN_IF" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
+    gateway="$(ip -4 route show default 2>/dev/null | awk '/default/ {print $3; exit}')"
+    public_ip="$(curl -4 --interface "$WAN_IF" --connect-timeout 5 --max-time 8 -sS https://api.ipify.org 2>/dev/null || true)"
+
+    wan_scope="unknown"
+    wan_public=false
+    case "$wan_ip" in
+        10.*|192.168.*|172.1[6-9].*|172.2[0-9].*|172.3[01].*) wan_scope="private" ;;
+        100.6[4-9].*|100.[7-9][0-9].*|100.1[01][0-9].*|100.12[0-7].*) wan_scope="shared_cgnat_range" ;;
+        169.254.*) wan_scope="link_local" ;;
+        "") wan_scope="missing" ;;
+        *) wan_scope="public"; wan_public=true ;;
+    esac
+
+    upnp_available=false
+    upnp_external_ip=""
+    if command -v upnpc >/dev/null 2>&1; then
+        upnp_out="$(timeout 8 upnpc -s 2>&1 || true)"
+        if ! echo "$upnp_out" | grep -q 'No IGD UPnP Device found'; then
+            upnp_external_ip="$(echo "$upnp_out" | sed -nE 's/.*ExternalIPAddress[[:space:]]*=[[:space:]]*([0-9.]+).*/\1/p' | head -1)"
+            [ -n "$upnp_external_ip" ] && upnp_available=true
+        fi
+    fi
+
+    natpmp_available=false
+    natpmp_external_ip=""
+    if command -v natpmpc >/dev/null 2>&1 && [ -n "$gateway" ]; then
+        natpmp_out="$(timeout 8 natpmpc -g "$gateway" 2>&1 || true)"
+        natpmp_external_ip="$(echo "$natpmp_out" | sed -nE 's/.*Public IP address[[:space:]]*:[[:space:]]*([0-9.]+).*/\1/p' | head -1)"
+        [ -n "$natpmp_external_ip" ] && natpmp_available=true
+    fi
+
+    mode="unknown"
+    if [ "$wan_public" = true ]; then
+        if [ -n "$public_ip" ] && [ "$wan_ip" = "$public_ip" ]; then
+            mode="direct_public"
+        else
+            mode="public_wan_address_mismatch"
+        fi
+    else
+        if [ "$upnp_available" = true ]; then
+            mode="upstream_nat_upnp"
+        elif [ "$natpmp_available" = true ]; then
+            mode="upstream_nat_natpmp"
+        elif [ "$wan_scope" = "shared_cgnat_range" ]; then
+            mode="cgnat_suspected_no_automap"
+        else
+            mode="upstream_nat_no_automap"
+        fi
+    fi
+}
+
+print_status() {
+    get_state
+    jq -n \
+        --arg wan_interface "$WAN_IF" \
+        --arg wan_ipv4 "$wan_ip" \
+        --arg wan_scope "$wan_scope" \
+        --arg gateway "$gateway" \
+        --arg public_ipv4 "$public_ip" \
+        --arg upnp_external_ipv4 "$upnp_external_ip" \
+        --arg natpmp_external_ipv4 "$natpmp_external_ip" \
+        --arg mode "$mode" \
+        --argjson wan_public "$wan_public" \
+        --argjson upnp_available "$upnp_available" \
+        --argjson natpmp_available "$natpmp_available" \
+        --argjson wireguard_port "$WG_PORT" \
+        --argjson mtg_port "$MTG_PORT" \
+    '{
+        wan_interface: $wan_interface,
+        wan_ipv4: $wan_ipv4,
+        wan_scope: $wan_scope,
+        gateway_ipv4: $gateway,
+        public_ipv4: $public_ipv4,
+        wan_public: $wan_public,
+        upnp: {available: $upnp_available, external_ipv4: $upnp_external_ipv4},
+        natpmp: {available: $natpmp_available, external_ipv4: $natpmp_external_ipv4},
+        services: {
+            wireguard: {protocol: "udp", port: $wireguard_port},
+            mtg: {protocol: "tcp", port: $mtg_port}
+        },
+        mode: $mode
+    }'
+}
+
+print_plan() {
+    get_state
+    case "$mode" in
+        direct_public)
+            jq -n --arg ip "$public_ip" --argjson wg "$WG_PORT" --argjson mtg "$MTG_PORT" \
+            '{mode:"direct_public",action:"none",automatic:true,endpoint_ipv4:$ip,mappings_required:false,wireguard:{protocol:"udp",port:$wg},mtg:{protocol:"tcp",port:$mtg}}'
+            ;;
+        upstream_nat_upnp)
+            jq -n --arg wan "$wan_ip" --arg public "$public_ip" --argjson wg "$WG_PORT" --argjson mtg "$MTG_PORT" \
+            '{mode:"upstream_nat_upnp",action:"create_upnp_mappings",automatic:true,internal_ipv4:$wan,endpoint_ipv4:$public,mappings:[{protocol:"udp",external_port:$wg,internal_port:$wg,service:"wireguard"},{protocol:"tcp",external_port:$mtg,internal_port:$mtg,service:"mtg"}]}'
+            ;;
+        upstream_nat_natpmp)
+            jq -n --arg wan "$wan_ip" --arg public "$public_ip" --argjson wg "$WG_PORT" --argjson mtg "$MTG_PORT" \
+            '{mode:"upstream_nat_natpmp",action:"create_natpmp_mappings",automatic:true,internal_ipv4:$wan,endpoint_ipv4:$public,mappings:[{protocol:"udp",external_port:$wg,internal_port:$wg,service:"wireguard"},{protocol:"tcp",external_port:$mtg,internal_port:$mtg,service:"mtg"}]}'
+            ;;
+        upstream_nat_no_automap)
+            jq -n --arg wan "$wan_ip" --arg public "$public_ip" --argjson wg "$WG_PORT" --argjson mtg "$MTG_PORT" \
+            '{mode:"upstream_nat_no_automap",action:"manual_port_forward",automatic:false,internal_ipv4:$wan,observed_public_ipv4:$public,instructions:[{protocol:"udp",external_port:$wg,internal_ipv4:$wan,internal_port:$wg,service:"wireguard"},{protocol:"tcp",external_port:$mtg,internal_ipv4:$wan,internal_port:$mtg,service:"mtg"}]}'
+            ;;
+        cgnat_suspected_no_automap)
+            jq -n --arg wan "$wan_ip" --arg public "$public_ip" \
+            '{mode:"cgnat_suspected_no_automap",action:"external_access_unavailable_or_manual",automatic:false,wan_ipv4:$wan,observed_public_ipv4:$public,warning:"CGNAT or additional upstream NAT is suspected"}'
+            ;;
+        *)
+            jq -n --arg mode "$mode" '{mode:$mode,action:"diagnose",automatic:false}'
+            ;;
+    esac
+}
+
+case "$ACTION" in
+    status) print_status ;;
+    plan) print_plan ;;
+    *)
+        echo "Usage: $0 {status|plan}" >&2
+        echo "Automatic apply/remove is intentionally not shipped until mapping ownership and NAT-PMP lease renewal are implemented." >&2
+        exit 2
+        ;;
+esac

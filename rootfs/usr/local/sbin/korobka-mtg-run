@@ -1,0 +1,18 @@
+#!/bin/sh
+
+SOCKS="127.0.0.1:4534"
+
+logger -t korobka-mtg "waiting for Podkop SOCKS $SOCKS"
+
+i=0
+while [ "$i" -lt 60 ]; do
+    if netstat -lnt 2>/dev/null | grep -qE '127\.0\.0\.1:4534[[:space:]]'; then
+        logger -t korobka-mtg "Podkop SOCKS is ready"
+        exec /usr/local/bin/mtg run /etc/mtg.toml
+    fi
+    i=$((i + 1))
+    sleep 1
+done
+
+logger -t korobka-mtg "Podkop SOCKS was not ready after 60 seconds"
+exit 1

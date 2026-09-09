@@ -1,0 +1,84 @@
+#!/bin/sh
+
+ACTION="${1:-status}"
+
+case "$ACTION" in
+    status) ;;
+    *) echo "Usage: $0 status" >&2; exit 2 ;;
+esac
+
+PA="$(/usr/bin/korobka-public-access status)" || exit 1
+access_mode="$(echo "$PA" | jq -r '.mode')"
+wan_ip="$(echo "$PA" | jq -r '.wan_ipv4 // empty')"
+public_ip="$(echo "$PA" | jq -r '.public_ipv4 // empty')"
+manual_confirmed="$(uci -q get korobka.endpoint.manual_forward_confirmed 2>/dev/null || echo 0)"
+wg_port="$(uci -q get korobka.endpoint.wireguard_port 2>/dev/null || echo 51821)"
+mtg_port="$(uci -q get korobka.endpoint.mtg_port 2>/dev/null || echo 8888)"
+
+ready=false
+reason="unknown"
+case "$access_mode" in
+    direct_public)
+        if [ -n "$public_ip" ]; then ready=true; reason="direct_public"; else reason="public_address_missing"; fi
+        ;;
+    upstream_nat_no_automap)
+        if [ "$manual_confirmed" = "1" ] && [ -n "$public_ip" ]; then ready=true; reason="manual_forward_confirmed"; else reason="manual_forward_required"; fi
+        ;;
+    upstream_nat_upnp) reason="upnp_mapping_required" ;;
+    upstream_nat_natpmp) reason="natpmp_mapping_required" ;;
+    cgnat_suspected_no_automap) reason="cgnat_or_nested_nat_suspected" ;;
+    public_wan_address_mismatch) reason="public_address_mismatch" ;;
+    *) reason="public_access_unknown" ;;
+esac
+
+wg_endpoint=""
+mtg_endpoint=""
+if [ "$ready" = true ] && [ -n "$public_ip" ]; then
+    wg_endpoint="${public_ip}:${wg_port}"
+    mtg_endpoint="${public_ip}:${mtg_port}"
+fi
+
+candidate_wg=""
+candidate_mtg=""
+if [ -n "$public_ip" ]; then
+    candidate_wg="${public_ip}:${wg_port}"
+    candidate_mtg="${public_ip}:${mtg_port}"
+fi
+
+if [ "$manual_confirmed" = "1" ]; then manual_json=true; else manual_json=false; fi
+
+jq -n \
+    --arg access_mode "$access_mode" \
+    --arg reason "$reason" \
+    --arg wan_ipv4 "$wan_ip" \
+    --arg public_ipv4 "$public_ip" \
+    --arg wg_endpoint "$wg_endpoint" \
+    --arg mtg_endpoint "$mtg_endpoint" \
+    --arg candidate_wg "$candidate_wg" \
+    --arg candidate_mtg "$candidate_mtg" \
+    --argjson ready "$ready" \
+    --argjson manual_confirmed "$manual_json" \
+    --argjson wg_port "$wg_port" \
+    --argjson mtg_port "$mtg_port" \
+'{
+    ready: $ready,
+    reason: $reason,
+    endpoint_mode: "public_ip",
+    public_access_mode: $access_mode,
+    network: {wan_ipv4: $wan_ipv4, public_ipv4: $public_ipv4},
+    selected_address: (if $public_ipv4 == "" then null else $public_ipv4 end),
+    address_source: "public_ipv4",
+    manual_forward_confirmed: $manual_confirmed,
+    wireguard: {
+        ready: $ready,
+        port: $wg_port,
+        endpoint: (if $wg_endpoint == "" then null else $wg_endpoint end),
+        candidate_endpoint: (if $candidate_wg == "" then null else $candidate_wg end)
+    },
+    mtg: {
+        ready: $ready,
+        port: $mtg_port,
+        endpoint: (if $mtg_endpoint == "" then null else $mtg_endpoint end),
+        candidate_endpoint: (if $candidate_mtg == "" then null else $candidate_mtg end)
+    }
+}'

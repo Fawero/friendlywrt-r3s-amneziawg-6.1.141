@@ -1,0 +1,5 @@
+config endpoint 'endpoint'
+	option mode 'public_ip'
+	option manual_forward_confirmed '0'
+	option wireguard_port '51821'
+	option mtg_port '8888'

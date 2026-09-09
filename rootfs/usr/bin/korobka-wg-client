@@ -1,0 +1,77 @@
+#!/bin/sh
+
+ACTION="${1:-status}"
+PEER="${2:-phone1}"
+DIR="/etc/korobka/wireguard/peers/$PEER"
+CLIENT_CONF="$DIR/client.conf"
+
+EP="$(/usr/bin/korobka-endpoint status)" || exit 1
+ready="$(echo "$EP" | jq -r '.wireguard.ready')"
+reason="$(echo "$EP" | jq -r '.reason')"
+endpoint="$(echo "$EP" | jq -r '.wireguard.endpoint // empty')"
+candidate="$(echo "$EP" | jq -r '.wireguard.candidate_endpoint // empty')"
+
+PRIVATE="$DIR/private.key"
+SERVER_PUBLIC="/etc/korobka/wireguard/server/public.key"
+client_address="$(uci -q get "network.$PEER.allowed_ips" 2>/dev/null | awk '{print $1}')"
+
+case "$ACTION" in
+status)
+    jq -n \
+        --arg peer "$PEER" \
+        --arg reason "$reason" \
+        --arg endpoint "$endpoint" \
+        --arg candidate "$candidate" \
+        --arg address "$client_address" \
+        --argjson ready "$ready" \
+    '{
+        peer: $peer,
+        ready: $ready,
+        reason: $reason,
+        address: (if $address == "" then null else $address end),
+        endpoint: (if $endpoint == "" then null else $endpoint end),
+        candidate_endpoint: (if $candidate == "" then null else $candidate end)
+    }'
+    ;;
+generate)
+    if [ "$ready" != "true" ]; then
+        echo "ERROR: endpoint is not ready: $reason" >&2
+        echo "Candidate: $candidate" >&2
+        exit 1
+    fi
+    [ -s "$PRIVATE" ] || { echo "ERROR: private key missing for $PEER" >&2; exit 1; }
+    [ -s "$SERVER_PUBLIC" ] || { echo "ERROR: server public key missing" >&2; exit 1; }
+    [ -n "$client_address" ] || { echo "ERROR: client address missing for $PEER" >&2; exit 1; }
+
+    mkdir -p "$DIR"
+    chmod 700 "$DIR"
+    umask 077
+    private_key="$(cat "$PRIVATE")"
+    server_public="$(cat "$SERVER_PUBLIC")"
+    cat > "$CLIENT_CONF" <<CFG
+[Interface]
+PrivateKey = $private_key
+Address = $client_address
+DNS = 10.77.0.1
+MTU = 1280
+
+[Peer]
+PublicKey = $server_public
+Endpoint = $endpoint
+AllowedIPs = 0.0.0.0/0
+PersistentKeepalive = 25
+CFG
+    unset private_key server_public
+    chmod 600 "$CLIENT_CONF"
+    echo "generated=$CLIENT_CONF"
+    ;;
+qr)
+    [ -s "$CLIENT_CONF" ] || { echo "ERROR: generate client config first" >&2; exit 1; }
+    command -v qrencode >/dev/null 2>&1 || { echo "ERROR: qrencode is not installed" >&2; exit 1; }
+    qrencode -t ANSIUTF8 < "$CLIENT_CONF"
+    ;;
+*)
+    echo "Usage: $0 {status|generate|qr} [peer]" >&2
+    exit 2
+    ;;
+esac

@@ -1,0 +1,68 @@
+#!/bin/sh
+
+ACTION="${1:-status}"
+EP="$(/usr/bin/korobka-endpoint status)" || exit 1
+ready="$(echo "$EP" | jq -r '.mtg.ready')"
+reason="$(echo "$EP" | jq -r '.reason')"
+public_ip="$(echo "$EP" | jq -r '.network.public_ipv4 // empty')"
+endpoint="$(echo "$EP" | jq -r '.mtg.endpoint // empty')"
+candidate="$(echo "$EP" | jq -r '.mtg.candidate_endpoint // empty')"
+ACCESS_FILE="/etc/korobka/mtg/access.json"
+
+case "$ACTION" in
+status)
+    jq -n \
+        --arg reason "$reason" \
+        --arg endpoint "$endpoint" \
+        --arg candidate "$candidate" \
+        --argjson ready "$ready" \
+    '{
+        ready: $ready,
+        reason: $reason,
+        endpoint: (if $endpoint == "" then null else $endpoint end),
+        candidate_endpoint: (if $candidate == "" then null else $candidate end)
+    }'
+    ;;
+generate)
+    if [ "$ready" != "true" ]; then
+        echo "ERROR: endpoint is not ready: $reason" >&2
+        echo "Candidate: $candidate" >&2
+        exit 1
+    fi
+    [ -s /etc/mtg.toml ] || { echo "ERROR: /etc/mtg.toml missing" >&2; exit 1; }
+    [ -n "$public_ip" ] || { echo "ERROR: public IPv4 missing" >&2; exit 1; }
+
+    TMP="/tmp/mtg-access-$$.toml"
+    awk -v ip="$public_ip" '
+        /^public-ipv4[[:space:]]*=/ { next }
+        {
+            print
+            if ($0 ~ /^bind-to[[:space:]]*=/) print "public-ipv4 = \"" ip "\""
+        }
+    ' /etc/mtg.toml > "$TMP"
+    chmod 600 "$TMP"
+
+    RAW="$(/usr/local/bin/mtg access "$TMP")"
+    RC=$?
+    rm -f "$TMP"
+    [ "$RC" -eq 0 ] || { echo "ERROR: mtg access failed" >&2; exit 1; }
+
+    mkdir -p /etc/korobka/mtg
+    chmod 700 /etc/korobka/mtg
+    echo "$RAW" | jq '{ipv4:{ip:.ipv4.ip,port:.ipv4.port,tg_url:.ipv4.tg_url,tme_url:.ipv4.tme_url}}' > "$ACCESS_FILE"
+    chmod 600 "$ACCESS_FILE"
+    echo "generated=$ACCESS_FILE"
+    jq '{ipv4:{ip:.ipv4.ip,port:.ipv4.port}}' "$ACCESS_FILE"
+    ;;
+qr)
+    [ -s "$ACCESS_FILE" ] || { echo "ERROR: run generate first" >&2; exit 1; }
+    command -v qrencode >/dev/null 2>&1 || { echo "ERROR: qrencode is not installed" >&2; exit 1; }
+    URL="$(jq -r '.ipv4.tme_url' "$ACCESS_FILE")"
+    [ -n "$URL" ] && [ "$URL" != "null" ] || { echo "ERROR: t.me URL missing" >&2; exit 1; }
+    qrencode -t ANSIUTF8 "$URL"
+    ;;
+*)
+    echo "Usage: $0 {status|generate|qr}" >&2
+    exit 2
+    ;;
+esac
