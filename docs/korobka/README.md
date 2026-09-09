@@ -1,10 +1,12 @@
 # Коробка — документация проекта
 
-Дата актуализации: **9 сентября 2026 года**. Редакция требований: **1.6**.
+Дата актуализации: **9 сентября 2026 года**. Редакция требований: **1.7**.
 
 Этот раздел — актуальная точка входа по тиражируемой Коробке на NanoPi R3S / R3S LTS. Последние проверенные решения и результаты испытаний имеют приоритет над ранними проектными предположениями.
 
-**Статус:** базовое сетевое runtime-ядро собрано и проверено на FriendlyElec NanoPi R3S LTS с FriendlyWrt 25.12.2 и фактическим ядром 6.1.141. Подтверждены AWG 3.1, netifd-owned provider tunnels, Podkop/sing-box, входящий стандартный WireGuard, MTG через отдельный SOCKS->WARP путь, reboot/autostart, диагностика внешнего доступа, live-управление несколькими WG peers без перезапуска сети и backend LuCI-панели `luci-app-korobka`. Backend панели прошёл полный live smoke-test: status, peers, add/remove, input validation, QR readiness gates, manual-forward state, menu/ACL и network safety. First-boot wizard ещё не реализован; визуальный UX самой панели ещё нужно проверить в браузере.
+**Статус:** базовое сетевое runtime-ядро собрано и проверено на FriendlyElec NanoPi R3S LTS с FriendlyWrt 25.12.2 и фактическим ядром 6.1.141. Подтверждены AWG 3.1, netifd-owned provider tunnels, Podkop/sing-box, входящий стандартный WireGuard, MTG через отдельный SOCKS->WARP путь, reboot/autostart, диагностика внешнего доступа, live-управление несколькими WG peers без перезапуска сети и backend LuCI-панели `luci-app-korobka`.
+
+LuCI backend прошёл полный live smoke-test, а performance-блок V5 подтвердил: cached status открывается примерно за 1 секунду, глубокая network-диагностика вынесена в отдельный refresh и занимает около 6 секунд, при этом default route, AWG, WireGuard, Podkop и MTG не меняются. В `main` подготовлен V6 visual candidate с общей дизайн-системой для Overview / Devices / Telegram / External Access; он требует отдельной browser/UI validation. First-boot wizard ещё не реализован.
 
 ## Документы
 
@@ -60,6 +62,7 @@ luci.korobka
 
 ```text
 status
+refresh_access
 peers
 add_peer
 remove_peer
@@ -68,7 +71,16 @@ mtg_qr
 set_manual_forward
 ```
 
-Полный live smoke-test подтвердил корректность status/peers contracts, input validation, disposable peer add/remove lifecycle, QR readiness gates и сохранение network safety. Текущий следующий шаг по панели — открыть четыре страницы в браузере и провести визуальный/UI/UX аудит уже работающего интерфейса.
+Performance architecture панели:
+
+- обычный `status` использует cached/local state и не ждёт внешних timeout-ов;
+- глубокая проверка public IPv4 / UPnP / NAT-PMP запускается отдельным `refresh_access`;
+- normal page load не выполняет повторные external probes;
+- страница Devices использует peers уже из `status` и не делает дополнительный RPC на загрузке;
+- backend QR gate остаётся строгим: рабочие секретные конфиги выдаются только при `endpoint.ready=true`;
+- UI-кнопки QR остаются кликабельными и при неготовом endpoint объясняют следующий шаг вместо немой disabled-кнопки.
+
+V5 live validation показал cached status около 1 секунды и explicit network refresh около 6 секунд на текущем стенде. V6 visual candidate добавляет общий CSS, единые карточки, badges, callouts, responsive layout и переработанные экраны Overview / Devices / Telegram / External Access. До browser validation V6 считается candidate, а не validated UI.
 
 ## Внешний доступ
 
@@ -115,7 +127,7 @@ WAN -> AWG interfaces -> Podkop/sing-box -> SOCKS ready -> MTG
 /usr/local/sbin/korobka-mtg-run
 ```
 
-В `luci-app-korobka/` сохранены menu JSON, ACL JSON, rpcd ucode backend и четыре LuCI JS views.
+В `luci-app-korobka/` сохранены menu JSON, ACL JSON, rpcd ucode backend, четыре LuCI JS views и общий visual stylesheet `korobka.css`.
 
 В `scripts/` сохранены воспроизводимые helpers и validators, включая:
 
@@ -124,7 +136,7 @@ WAN -> AWG interfaces -> Podkop/sing-box -> SOCKS ready -> MTG
 - создание нового incoming WireGuard server + первого peer;
 - конфигурацию MTG через отдельный Podkop SOCKS -> `awg_warp`;
 - development installer LuCI-панели;
-- полный backend validator LuCI-панели.
+- полный backend/performance/UI-asset validator LuCI-панели.
 
 ## Критическое ограничение FriendlyWrt
 
@@ -144,7 +156,7 @@ APK metadata kernel: 6.12.74
 
 ## Следующая точка продолжения
 
-1. Провести browser/UI/UX validation четырёх страниц `luci-app-korobka` и одним крупным блоком довести внешний вид, понятность статусов, действия и mobile layout.
+1. Установить V6 visual candidate, пройти backend/performance/UI-asset validator и провести browser validation четырёх страниц.
 2. Сделать безопасное ownership/renewal для автоматических UPnP/NAT-PMP mappings перед включением `apply/remove` в production runtime.
 3. Перед release image провести отдельный regression: удалить disposable peer, перезагрузить коробку и подтвердить, что удалённый и не пере-добавленный peer не возвращается.
 4. После этого оформить first-boot wizard и сборку воспроизводимого образа.
