@@ -1,0 +1,155 @@
+#!/bin/sh
+set -eu
+
+ACTION="${1:-status}"
+TARGET_IP="${KOROBKA_LAN_IP:-192.168.77.1}"
+TARGET_CIDR="${TARGET_IP}/24"
+TARGET_NET="192.168.77.0/24"
+TARGET_HOSTNAME="korobka"
+TARGET_FQDN="korobka.home.arpa"
+STATE_DIR="/etc/korobka/local-management"
+BACKUP_ROOT="$STATE_DIR/backups"
+LAST_BACKUP="$STATE_DIR/last-backup"
+
+fail() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+lan_ip() {
+    uci -q get network.lan.ipaddr 2>/dev/null | sed 's#/.*##'
+}
+
+current_hostname() {
+    uci -q get system.@system[0].hostname 2>/dev/null || hostname
+}
+
+dns_record_present() {
+    uci -q show dhcp.@dnsmasq[0].address 2>/dev/null | grep -Fq "/$TARGET_FQDN/$TARGET_IP"
+}
+
+dhcp_dns_present() {
+    uci -q show dhcp.lan.dhcp_option 2>/dev/null | grep -Fq "6,$TARGET_IP"
+}
+
+status_json() {
+    IP="$(lan_ip)"
+    HOST="$(current_hostname)"
+    DNS=false
+    DHCPDNS=false
+    [ "$IP" = "$TARGET_IP" ] && IP_OK=true || IP_OK=false
+    dns_record_present && DNS=true || true
+    dhcp_dns_present && DHCPDNS=true || true
+    if [ "$IP_OK" = true ] && [ "$DNS" = true ] && [ "$DHCPDNS" = true ]; then
+        CONFIGURED=true
+    else
+        CONFIGURED=false
+    fi
+
+    LINK=false
+    if ip link show br-lan 2>/dev/null | grep -q 'LOWER_UP'; then LINK=true; fi
+
+    jq -n \
+        --arg lan_ip "$IP" \
+        --arg target_ip "$TARGET_IP" \
+        --arg fqdn "$TARGET_FQDN" \
+        --arg hostname "$HOST" \
+        --arg primary_url "https://$TARGET_FQDN/" \
+        --arg fallback_url "https://$TARGET_IP/" \
+        --argjson configured "$CONFIGURED" \
+        --argjson dns_record "$DNS" \
+        --argjson dhcp_dns "$DHCPDNS" \
+        --argjson link "$LINK" \
+        '{configured:$configured,lan_ipv4:$lan_ip,target_ipv4:$target_ip,hostname:$hostname,fqdn:$fqdn,dns_record:$dns_record,dhcp_dns:$dhcp_dns,link_up:$link,primary_url:$primary_url,fallback_url:$fallback_url}'
+}
+
+check_conflict() {
+    if ip -4 route show "$TARGET_NET" 2>/dev/null | grep -q .; then
+        ROUTE="$(ip -4 route show "$TARGET_NET" | head -1)"
+        case "$ROUTE" in
+            *"dev br-lan"*) return 0 ;;
+            *) fail "target subnet $TARGET_NET already exists: $ROUTE" ;;
+        esac
+    fi
+
+    WAN_IP="$(ip -4 -o addr show dev eth0 2>/dev/null | awk '{print $4}' | head -1)"
+    case "$WAN_IP" in
+        192.168.77.*) fail "WAN already uses target subnet $TARGET_NET" ;;
+    esac
+}
+
+make_backup() {
+    STAMP="$(date +%Y%m%d-%H%M%S)"
+    DIR="$BACKUP_ROOT/$STAMP"
+    mkdir -p "$DIR"
+    chmod 700 "$STATE_DIR" "$BACKUP_ROOT" "$DIR"
+
+    for F in network dhcp system firewall; do
+        cp -a "/etc/config/$F" "$DIR/$F"
+    done
+    printf '%s\n' "$DIR" > "$LAST_BACKUP"
+    chmod 600 "$LAST_BACKUP" "$DIR"/*
+    echo "$DIR"
+}
+
+apply_config() {
+    check_conflict
+    BACKUP="$(make_backup)"
+
+    uci set network.lan.ipaddr="$TARGET_CIDR"
+
+    uci -q del_list dhcp.lan.dhcp_option="6,$TARGET_IP" 2>/dev/null || true
+    uci add_list dhcp.lan.dhcp_option="6,$TARGET_IP"
+
+    uci -q del_list dhcp.@dnsmasq[0].address="/$TARGET_FQDN/$TARGET_IP" 2>/dev/null || true
+    uci add_list dhcp.@dnsmasq[0].address="/$TARGET_FQDN/$TARGET_IP"
+
+    uci set system.@system[0].hostname="$TARGET_HOSTNAME"
+
+    uci commit network
+    uci commit dhcp
+    uci commit system
+
+    hostname "$TARGET_HOSTNAME" 2>/dev/null || true
+
+    ifdown lan 2>/dev/null || true
+    ifup lan
+    /etc/init.d/dnsmasq restart
+
+    RESULT="$(status_json)"
+    if ! echo "$RESULT" | jq -e '.configured == true' >/dev/null; then
+        echo "Configuration verification failed; rollback backup: $BACKUP" >&2
+        exit 1
+    fi
+
+    echo "$RESULT" | jq --arg backup "$BACKUP" '. + {backup:$backup}'
+}
+
+rollback_config() {
+    [ -s "$LAST_BACKUP" ] || fail "no local-management backup available"
+    DIR="$(cat "$LAST_BACKUP")"
+    [ -d "$DIR" ] || fail "backup directory missing: $DIR"
+
+    for F in network dhcp system firewall; do
+        [ -f "$DIR/$F" ] || fail "backup file missing: $DIR/$F"
+        cp -a "$DIR/$F" "/etc/config/$F"
+    done
+
+    ifdown lan 2>/dev/null || true
+    ifup lan 2>/dev/null || true
+    /etc/init.d/dnsmasq restart
+    /etc/init.d/firewall reload
+    hostname "$(current_hostname)" 2>/dev/null || true
+
+    jq -n --arg backup "$DIR" --arg lan_ipv4 "$(lan_ip)" '{ok:true,action:"rollback",backup:$backup,lan_ipv4:$lan_ipv4}'
+}
+
+case "$ACTION" in
+    status) status_json ;;
+    apply) apply_config ;;
+    rollback) rollback_config ;;
+    *)
+        echo "Usage: $0 {status|apply|rollback}" >&2
+        exit 2
+        ;;
+esac
