@@ -103,7 +103,16 @@ const methods = {
 
     peers: {
         call: function() {
-            return run_json(['/usr/bin/korobka-wg-peer', 'list']);
+            const peers = run_json(['/usr/bin/korobka-wg-peer', 'list']);
+
+            if (type(peers) == 'object' && peers.error)
+                return peers;
+
+            if (type(peers) != 'array')
+                return { error: 'Unexpected peers response type' };
+
+            /* rpcd ucode method callbacks must return a dictionary. */
+            return { peers };
         }
     },
 
