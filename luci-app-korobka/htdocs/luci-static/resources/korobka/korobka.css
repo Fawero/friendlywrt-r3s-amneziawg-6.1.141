@@ -1,0 +1,288 @@
+.korobka-page {
+	--kb-bg: #f6f8fb;
+	--kb-card: #ffffff;
+	--kb-border: #e3e8ef;
+	--kb-text: #18212f;
+	--kb-muted: #667085;
+	--kb-accent: #2563eb;
+	--kb-accent-soft: #eff6ff;
+	--kb-ok: #18794e;
+	--kb-ok-soft: #e9f8ef;
+	--kb-warn: #9a6700;
+	--kb-warn-soft: #fff7dd;
+	--kb-bad: #b42318;
+	--kb-bad-soft: #fff0ee;
+	color: var(--kb-text);
+}
+
+.korobka-page * { box-sizing: border-box; }
+
+.korobka-shell {
+	background: var(--kb-bg);
+	border-radius: 18px;
+	padding: 22px;
+	margin-top: 12px;
+}
+
+.korobka-hero {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+	margin-bottom: 18px;
+}
+
+.korobka-title {
+	margin: 0 0 4px 0 !important;
+	font-size: 28px;
+	line-height: 1.15;
+	letter-spacing: -0.02em;
+}
+
+.korobka-subtitle {
+	color: var(--kb-muted);
+	font-size: 14px;
+	line-height: 1.5;
+	max-width: 760px;
+}
+
+.korobka-toolbar {
+	display: flex;
+	gap: 8px;
+	align-items: center;
+	flex-wrap: wrap;
+}
+
+.korobka-btn {
+	border: 1px solid var(--kb-border) !important;
+	border-radius: 9px !important;
+	padding: 8px 13px !important;
+	font-weight: 600 !important;
+	box-shadow: 0 1px 2px rgba(16, 24, 40, .05);
+}
+
+.korobka-btn-primary {
+	background: var(--kb-accent) !important;
+	border-color: var(--kb-accent) !important;
+	color: white !important;
+}
+
+.korobka-btn-soft {
+	background: var(--kb-accent-soft) !important;
+	border-color: #bfdbfe !important;
+	color: #1d4ed8 !important;
+}
+
+.korobka-btn-danger {
+	background: #fff !important;
+	border-color: #fecaca !important;
+	color: var(--kb-bad) !important;
+}
+
+.korobka-grid {
+	display: grid;
+	grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+	gap: 14px;
+}
+
+.korobka-grid-3 {
+	display: grid;
+	grid-template-columns: repeat(3, minmax(0, 1fr));
+	gap: 14px;
+}
+
+.korobka-card {
+	background: var(--kb-card);
+	border: 1px solid var(--kb-border);
+	border-radius: 14px;
+	padding: 16px;
+	box-shadow: 0 1px 2px rgba(16,24,40,.03), 0 8px 24px rgba(16,24,40,.035);
+	min-width: 0;
+}
+
+.korobka-card-head {
+	display: flex;
+	justify-content: space-between;
+	align-items: center;
+	gap: 12px;
+	margin-bottom: 12px;
+}
+
+.korobka-card h3 {
+	margin: 0 !important;
+	font-size: 17px;
+}
+
+.korobka-section-title {
+	font-size: 19px;
+	margin: 24px 0 10px 0 !important;
+}
+
+.korobka-badge {
+	display: inline-flex;
+	align-items: center;
+	gap: 6px;
+	padding: 5px 9px;
+	border-radius: 999px;
+	font-size: 12px;
+	font-weight: 700;
+	white-space: nowrap;
+}
+
+.korobka-badge:before {
+	content: '';
+	width: 7px;
+	height: 7px;
+	border-radius: 50%;
+	background: currentColor;
+}
+
+.korobka-badge-ok { background: var(--kb-ok-soft); color: var(--kb-ok); }
+.korobka-badge-warn { background: var(--kb-warn-soft); color: var(--kb-warn); }
+.korobka-badge-bad { background: var(--kb-bad-soft); color: var(--kb-bad); }
+.korobka-badge-neutral { background: #f2f4f7; color: #475467; }
+
+.korobka-kv {
+	display: flex;
+	align-items: flex-start;
+	justify-content: space-between;
+	gap: 16px;
+	padding: 7px 0;
+	border-bottom: 1px solid #f0f2f5;
+}
+
+.korobka-kv:last-child { border-bottom: 0; }
+.korobka-kv-label { color: var(--kb-muted); min-width: 0; }
+.korobka-kv-value { font-weight: 650; text-align: right; word-break: break-word; }
+
+.korobka-callout {
+	display: flex;
+	gap: 12px;
+	align-items: flex-start;
+	padding: 13px 15px;
+	border-radius: 12px;
+	margin: 14px 0;
+	border: 1px solid transparent;
+}
+
+.korobka-callout-icon {
+	font-size: 18px;
+	line-height: 1.2;
+	margin-top: 1px;
+}
+
+.korobka-callout-warn { background: var(--kb-warn-soft); border-color: #f3d38a; }
+.korobka-callout-ok { background: var(--kb-ok-soft); border-color: #b7e4c7; }
+.korobka-callout-info { background: var(--kb-accent-soft); border-color: #bfdbfe; }
+
+.korobka-code {
+	font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+	background: #f3f4f6;
+	padding: 2px 6px;
+	border-radius: 5px;
+	font-size: 12px;
+}
+
+.korobka-table-wrap {
+	overflow-x: auto;
+	border: 1px solid var(--kb-border);
+	border-radius: 12px;
+	background: #fff;
+}
+
+.korobka-table {
+	width: 100%;
+	border-collapse: collapse;
+	margin: 0 !important;
+}
+
+.korobka-table th {
+	background: #f8fafc;
+	color: #475467;
+	font-size: 12px;
+	font-weight: 700;
+	text-transform: uppercase;
+	letter-spacing: .02em;
+}
+
+.korobka-table th,
+.korobka-table td {
+	padding: 12px 13px !important;
+	border-bottom: 1px solid #eef1f5 !important;
+	vertical-align: middle !important;
+}
+
+.korobka-table tr:last-child td { border-bottom: 0 !important; }
+
+.korobka-device-name { font-weight: 750; }
+.korobka-actions { display: flex; gap: 7px; flex-wrap: wrap; }
+
+.korobka-form-row {
+	display: flex;
+	gap: 9px;
+	align-items: center;
+	flex-wrap: wrap;
+}
+
+.korobka-input {
+	min-width: 280px !important;
+	border-radius: 9px !important;
+	padding: 9px 11px !important;
+}
+
+.korobka-flow {
+	display: grid;
+	grid-template-columns: repeat(4, minmax(0, 1fr));
+	gap: 10px;
+	align-items: stretch;
+}
+
+.korobka-flow-step {
+	position: relative;
+	background: #fff;
+	border: 1px solid var(--kb-border);
+	border-radius: 12px;
+	padding: 14px;
+	text-align: center;
+}
+
+.korobka-flow-step:not(:last-child):after {
+	content: '→';
+	position: absolute;
+	right: -12px;
+	top: 50%;
+	transform: translateY(-50%);
+	font-size: 18px;
+	font-weight: 700;
+	color: #98a2b3;
+	z-index: 2;
+}
+
+.korobka-flow-title { font-weight: 750; margin-bottom: 4px; }
+.korobka-flow-meta { color: var(--kb-muted); font-size: 12px; }
+
+.korobka-metric {
+	font-size: 25px;
+	font-weight: 800;
+	letter-spacing: -.02em;
+	margin: 2px 0 1px;
+}
+
+.korobka-caption { color: var(--kb-muted); font-size: 12px; }
+
+@media (max-width: 980px) {
+	.korobka-grid-3 { grid-template-columns: 1fr; }
+	.korobka-flow { grid-template-columns: 1fr 1fr; }
+	.korobka-flow-step:not(:last-child):after { display: none; }
+}
+
+@media (max-width: 640px) {
+	.korobka-shell { padding: 14px; border-radius: 12px; }
+	.korobka-hero { flex-direction: column; }
+	.korobka-title { font-size: 24px; }
+	.korobka-grid, .korobka-grid-3, .korobka-flow { grid-template-columns: 1fr; }
+	.korobka-input { min-width: 100% !important; width: 100%; }
+	.korobka-form-row .korobka-btn { width: 100%; }
+	.korobka-kv { gap: 10px; }
+	.korobka-kv-value { max-width: 58%; }
+}
