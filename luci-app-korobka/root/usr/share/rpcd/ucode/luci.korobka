@@ -101,6 +101,17 @@ const methods = {
         }
     },
 
+    refresh_access: {
+        call: function() {
+            const refreshed = run_json(['/usr/bin/korobka-public-access', 'refresh']);
+
+            if (type(refreshed) == 'object' && refreshed.error)
+                return refreshed;
+
+            return run_json(['/usr/bin/korobka-ui-status']);
+        }
+    },
+
     peers: {
         call: function() {
             const peers = run_json(['/usr/bin/korobka-wg-peer', 'list']);
