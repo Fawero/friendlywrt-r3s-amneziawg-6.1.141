@@ -1,16 +1,17 @@
 # Коробка — документация проекта
 
-Дата актуализации: **9 сентября 2026 года**. Редакция требований: **1.3**.
+Дата актуализации: **9 сентября 2026 года**. Редакция требований: **1.4**.
 
 Этот раздел — актуальная точка входа по тиражируемой Коробке на NanoPi R3S / R3S LTS. Последние проверенные решения и результаты испытаний имеют приоритет над ранними проектными предположениями.
 
-**Статус:** базовое сетевое runtime-ядро уже собрано и проверено на FriendlyElec NanoPi R3S LTS с FriendlyWrt 25.12.2 и фактическим ядром 6.1.141. Подтверждены AWG 3.1, netifd-owned provider tunnels, Podkop/sing-box, входящий стандартный WireGuard, MTG через отдельный SOCKS->WARP путь, reboot/autostart и диагностика внешнего доступа. LuCI-панель `luci-app-korobka`, first-boot wizard и менеджер множества WG peers ещё не реализованы.
+**Статус:** базовое сетевое runtime-ядро уже собрано и проверено на FriendlyElec NanoPi R3S LTS с FriendlyWrt 25.12.2 и фактическим ядром 6.1.141. Подтверждены AWG 3.1, netifd-owned provider tunnels, Podkop/sing-box, входящий стандартный WireGuard, MTG через отдельный SOCKS->WARP путь, reboot/autostart, диагностика внешнего доступа и live-добавление нескольких WG peers без перезапуска сети. LuCI-панель `luci-app-korobka` и first-boot wizard ещё не реализованы. Add/list путь менеджера WG peers проверен; remove-путь ещё должен пройти отдельную destructive/reboot-валидацию.
 
 ## Документы
 
 | Документ | Содержание |
 |---|---|
 | [Runtime foundation 2026-09-09](RUNTIME-FOUNDATION-2026-09-09.md) | Фактически проверенная runtime-архитектура: WG, Podkop, MTG, reboot, NAT detection, endpoint/client generation и ограничения |
+| [WG peer manager validation 2026-09-09](WG-PEER-VALIDATION-2026-09-09.md) | Проверка add/list, автоматического адреса, live runtime update и отсутствия влияния на AWG/default route |
 | [Требования и первый запуск](FIRST-BOOT.md) | Мастер, постоянный импорт конфигураций, назначения, белый IP, телефон и QR-коды |
 | [Архитектура](ARCHITECTURE.md) | AWG, Podkop, MTG, входящий WireGuard, управление и запуск без гонок |
 | [Podkop](PODKOP.md) | Установка, миграция старой политики и правила владения маршрутизацией |
@@ -31,6 +32,8 @@ Telegram client -> MTG :8888 -> 127.0.0.1:4534 -> awg_warp -> Telegram
 Проверенные исходящие интерфейсы текущего эталона: `awg_warp`, `awg_lu`, `awg_kz`. Это назначения текущей конфигурации, а не продуктовый лимит числа provider-профилей.
 
 Входящий VPN телефона использует **стандартный WireGuard**, а не AmneziaWG. Серверный ключ и ключ каждого телефона генерируются заново на каждой коробке; ключи старого устройства не мигрируются. Доверенным WG-пирам разрешён доступ к LuCI/SSH самого роутера и к LAN — это отдельное осознанное решение. Будущая собственная панель `luci-app-korobka` остаётся локальным интерфейсом управления и не должна публиковаться напрямую в WAN.
+
+`korobka-wg-peer` уже умеет перечислять peers и добавлять новый peer с автоматическим выделением следующего свободного `10.77.0.x/32`, новой парой ключей, UCI persistence и live-обновлением `wg_clients` через `wg set`. На проверенном add-пути provider AWG interfaces и физический default route не изменились.
 
 ## Внешний доступ
 
@@ -71,6 +74,7 @@ WAN -> AWG interfaces -> Podkop/sing-box -> SOCKS ready -> MTG
 /usr/bin/korobka-public-access
 /usr/bin/korobka-endpoint
 /usr/bin/korobka-wg-client
+/usr/bin/korobka-wg-peer
 /usr/bin/korobka-mtg-access
 /usr/local/sbin/korobka-mtg-run
 ```
@@ -100,9 +104,9 @@ APK metadata kernel: 6.12.74
 
 ## Следующая точка продолжения
 
-1. Реализовать `korobka-wg-peer` с `add/list/remove`, свежими ключами и автоматическим выделением `10.77.0.x/32`.
+1. Проверить `korobka-wg-peer remove` на disposable peer, затем reboot и убедиться, что удалённый peer не возвращается, а AWG/default route не меняются.
 2. Сделать безопасное ownership/renewal для автоматических UPnP/NAT-PMP mappings перед включением `apply/remove` в production runtime.
-3. Собрать `luci-app-korobka` поверх уже существующих CLI contracts.
+3. Собрать `luci-app-korobka` поверх уже существующих CLI contracts, включая Add device / Remove device / QR.
 4. После этого оформить first-boot wizard и сборку воспроизводимого образа.
 
 ## Правило фиксации
