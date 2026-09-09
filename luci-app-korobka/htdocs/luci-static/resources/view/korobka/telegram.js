@@ -6,6 +6,10 @@
 const callStatus = rpc.declare({ object: 'luci.korobka', method: 'status' });
 const callQr = rpc.declare({ object: 'luci.korobka', method: 'mtg_qr' });
 
+function css() {
+	return E('link', { 'rel': 'stylesheet', 'href': L.resource('korobka/korobka.css') });
+}
+
 function notifyError(message) {
 	ui.addNotification(null, E('p', {}, message || _('Неизвестная ошибка')), 'error');
 }
@@ -16,15 +20,22 @@ function showSvg(title, svg) {
 	ui.showModal(title, [
 		box,
 		E('div', {'class': 'right', 'style': 'margin-top:16px'}, [
-			E('button', {'class': 'btn cbi-button', 'click': ui.hideModal}, _('Закрыть'))
+			E('button', {'class': 'btn cbi-button korobka-btn', 'click': ui.hideModal}, _('Закрыть'))
 		])
 	]);
 }
 
-function kv(label, value) {
-	return E('div', {'style': 'display:flex;justify-content:space-between;gap:16px;margin:8px 0'}, [
-		E('span', {'style': 'color:#666'}, label),
-		E('strong', {'style': 'text-align:right'}, value == null || value === '' ? '—' : String(value))
+function kv(label, value, code) {
+	return E('div', {'class': 'korobka-kv'}, [
+		E('span', {'class': 'korobka-kv-label'}, label),
+		E(code ? 'code' : 'span', {'class': code ? 'korobka-code' : 'korobka-kv-value'}, value == null || value === '' ? '—' : String(value))
+	]);
+}
+
+function flowStep(title, meta) {
+	return E('div', {'class': 'korobka-flow-step'}, [
+		E('div', {'class': 'korobka-flow-title'}, title),
+		E('div', {'class': 'korobka-flow-meta'}, meta)
 	]);
 }
 
@@ -38,20 +49,23 @@ return view.extend({
 
 		if (!ready) {
 			ui.showModal(_('QR пока не готов'), [
-				E('p', {}, _('Telegram MTProxy работает, но внешний endpoint ещё не подтверждён.')),
-				E('p', {}, [
-					_('Причина: '), E('code', {}, endpoint && endpoint.reason || 'unknown'),
-					E('br'),
-					_('Candidate: '), E('code', {}, e.candidate_endpoint || '—')
+				E('div', {'class': 'korobka-callout korobka-callout-warn'}, [
+					E('div', {'class': 'korobka-callout-icon'}, '!'),
+					E('div', {}, [E('strong', {}, _('MTProxy уже работает локально, но внешний endpoint не подтверждён.'))])
 				]),
-				E('p', {}, _('Настройте внешний доступ, после чего панель выдаст рабочий Telegram QR.')),
+				E('p', {}, [
+					_('Причина: '), E('code', {'class': 'korobka-code'}, endpoint && endpoint.reason || 'unknown'),
+					E('br'),
+					_('Candidate: '), E('code', {'class': 'korobka-code'}, e.candidate_endpoint || '—')
+				]),
+				E('p', {}, _('После настройки внешнего доступа панель выдаст рабочий Telegram QR. Secret текстом не показывается.')),
 				E('div', {'class': 'right'}, [
-					E('button', {'class': 'btn', 'click': ui.hideModal}, _('Закрыть')),
+					E('button', {'class': 'btn korobka-btn', 'click': ui.hideModal}, _('Закрыть')),
 					' ',
 					E('button', {
-						'class': 'btn cbi-button cbi-button-action',
+						'class': 'btn cbi-button korobka-btn korobka-btn-primary',
 						'click': function() { window.location.href = L.url('admin/korobka/access'); }
-					}, _('Внешний доступ'))
+					}, _('Настроить внешний доступ'))
 				])
 			]);
 			return;
@@ -78,44 +92,54 @@ return view.extend({
 		const endpoint = s.endpoint || {};
 		const e = endpoint.mtg || {};
 		const ready = !!e.ready;
+		const healthy = !!mtg.running && !!mtg.listening && !!podkop.telegram_socks_ready;
 
-		const nodes = [
-			E('h2', {}, _('Telegram MTProxy')),
-			E('p', {}, _('Отдельный Telegram-тракт Коробки. MTG не выходит напрямую: весь его исходящий трафик идёт через локальный SOCKS Podkop и WARP.')),
-			E('div', {'style': 'display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:14px'}, [
-				E('div', {'class': 'cbi-section', 'style': 'margin:0'}, [
-					E('h3', {}, _('Состояние')),
-					kv(_('MTG'), mtg.running ? _('Работает') : _('Не работает')),
-					kv(_('TCP порт'), mtg.listen_port),
-					kv(_('Порт слушается'), mtg.listening ? _('Да') : _('Нет')),
-					kv(_('Внутренний SOCKS'), podkop.telegram_socks),
-					kv(_('SOCKS готов'), podkop.telegram_socks_ready ? _('Да') : _('Нет')),
-					kv(_('Исходящий интерфейс'), mtg.outbound || 'awg_warp')
+		return E('div', {'class': 'korobka-page'}, [
+			css(),
+			E('div', {'class': 'korobka-shell'}, [
+				E('div', {'class': 'korobka-hero'}, [
+					E('div', {}, [
+						E('h2', {'class': 'korobka-title'}, _('Telegram MTProxy')),
+						E('div', {'class': 'korobka-subtitle'}, _('Отдельный Telegram-тракт: входящий MTG не выходит напрямую в Интернет, а использует локальный SOCKS Podkop и WARP.'))
+					]),
+					E('span', {'class': 'korobka-badge ' + (healthy ? 'korobka-badge-ok' : 'korobka-badge-warn')}, healthy ? _('Тракт работает') : _('Требует проверки'))
 				]),
-				E('div', {'class': 'cbi-section', 'style': 'margin:0'}, [
-					E('h3', {}, _('Маршрут')),
-					E('pre', {'style': 'white-space:pre-wrap;margin:0'}, 'Telegram client\n  ↓ TCP/8888\nMTG\n  ↓\n127.0.0.1:4534\n  ↓\nPodkop TelegramProxy-out\n  ↓\nawg_warp\n  ↓\nTelegram')
+				E('div', {'class': 'korobka-grid'}, [
+					E('div', {'class': 'korobka-card'}, [
+						E('div', {'class': 'korobka-card-head'}, [E('h3', {}, _('Состояние')), E('span', {'class': 'korobka-badge ' + (mtg.running ? 'korobka-badge-ok' : 'korobka-badge-warn')}, mtg.running ? _('MTG запущен') : _('MTG остановлен'))]),
+						kv(_('TCP порт'), mtg.listen_port, true),
+						kv(_('Порт слушается'), mtg.listening ? _('Да') : _('Нет')),
+						kv(_('Внутренний SOCKS'), podkop.telegram_socks, true),
+						kv(_('SOCKS готов'), podkop.telegram_socks_ready ? _('Да') : _('Нет')),
+						kv(_('Исходящий интерфейс'), mtg.outbound || 'awg_warp', true)
+					]),
+					E('div', {'class': 'korobka-card'}, [
+						E('div', {'class': 'korobka-card-head'}, [E('h3', {}, _('Подключение')), E('span', {'class': 'korobka-badge ' + (ready ? 'korobka-badge-ok' : 'korobka-badge-warn')}, ready ? _('QR готов') : _('Нужен endpoint'))]),
+					E('p', {'class': 'korobka-subtitle'}, _('Secret и access link не показываются обычным текстом. Для подключения выдаётся только QR авторизованному администратору.')),
+					E('div', {'style': 'margin-top:14px'}, [
+						E('button', {
+							'class': 'btn cbi-button korobka-btn ' + (ready ? 'korobka-btn-primary' : 'korobka-btn-soft'),
+							'click': this.handleQr.bind(this, ready, endpoint)
+						}, ready ? _('Показать QR') : _('QR / что настроить'))
+					])
+					])
+				]),
+				!ready ? E('div', {'class': 'korobka-callout korobka-callout-warn'}, [
+					E('div', {'class': 'korobka-callout-icon'}, '!'),
+					E('div', {}, [
+						E('strong', {}, _('Локальный MTProxy уже готов, но извне его пока нельзя использовать. ')),
+						_('Candidate: '), E('code', {'class': 'korobka-code'}, e.candidate_endpoint || '—')
+					])
+				]) : null,
+				E('h3', {'class': 'korobka-section-title'}, _('Маршрут Telegram-трафика')),
+				E('div', {'class': 'korobka-flow'}, [
+					flowStep(_('Telegram клиент'), 'TCP / ' + String(mtg.listen_port || 8888)),
+					flowStep('MTG', _('Входящий прокси')),
+					flowStep(_('Podkop SOCKS'), podkop.telegram_socks || '127.0.0.1:4534'),
+					flowStep('WARP', mtg.outbound || 'awg_warp')
 				])
 			])
-		];
-
-		if (!ready) {
-			nodes.push(E('div', {'class': 'cbi-section warning', 'style': 'margin-top:14px'}, [
-				E('strong', {}, _('Внешний endpoint ещё не готов. ')),
-				_('Кнопка QR доступна и покажет, что именно нужно настроить.')
-			]));
-		}
-
-		nodes.push(E('div', {'class': 'cbi-section'}, [
-			E('h3', {}, _('Подключение Telegram')),
-			E('p', {}, _('Secret и ссылка не показываются обычным текстом. Панель выдаёт только QR для авторизованного администратора.')),
-			E('button', {
-				'class': 'btn cbi-button cbi-button-action',
-				'click': this.handleQr.bind(this, ready, endpoint)
-			}, ready ? _('Показать QR') : _('QR / настройка'))
-		]));
-
-		return E('div', {}, nodes);
+		]);
 	},
 
 	handleSave: null,
