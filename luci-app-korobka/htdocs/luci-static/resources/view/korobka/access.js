@@ -7,25 +7,34 @@ const callStatus = rpc.declare({ object: 'luci.korobka', method: 'status' });
 const callRefreshAccess = rpc.declare({ object: 'luci.korobka', method: 'refresh_access' });
 const callSetManual = rpc.declare({ object: 'luci.korobka', method: 'set_manual_forward', params: [ 'confirmed' ] });
 
-function kv(label, value) {
-	return E('div', {'style': 'display:flex;justify-content:space-between;gap:16px;margin:8px 0'}, [
-		E('span', {'style': 'color:#666'}, label),
-		E('strong', {'style': 'text-align:right;word-break:break-word'}, value == null || value === '' ? '—' : String(value))
-	]);
+function css() {
+	return E('link', { 'rel': 'stylesheet', 'href': L.resource('korobka/korobka.css') });
 }
 
-function badge(ok, text) {
-	return E('span', {
-		'style': 'display:inline-block;padding:3px 9px;border-radius:999px;font-weight:600;background:' +
-			(ok ? '#dff5e7;color:#176b3a' : '#fde7e7;color:#9b1c1c')
-	}, text);
+function kv(label, value, code) {
+	return E('div', {'class': 'korobka-kv'}, [
+		E('span', {'class': 'korobka-kv-label'}, label),
+		E(code ? 'code' : 'span', {'class': code ? 'korobka-code' : 'korobka-kv-value'}, value == null || value === '' ? '—' : String(value))
+	]);
 }
 
 function probeText(access) {
 	if (!access) return '—';
-	if (access.probe_pending) return _('Обновляется в фоне');
+	if (access.probe_pending) return _('Обновляется');
 	if (access.observed_at) return new Date(Number(access.observed_at) * 1000).toLocaleString();
 	return _('Ещё не выполнялась');
+}
+
+function endpointCard(title, protocol, port, candidate, ready) {
+	return E('div', {'class': 'korobka-card'}, [
+		E('div', {'class': 'korobka-card-head'}, [
+			E('h3', {}, title),
+			E('span', {'class': 'korobka-badge ' + (ready ? 'korobka-badge-ok' : 'korobka-badge-warn')}, ready ? _('Готов') : _('Ожидает проброс'))
+		]),
+		kv(_('Протокол'), protocol),
+		kv(_('Порт'), port, true),
+		kv(_('Endpoint'), candidate, true)
+	]);
 }
 
 return view.extend({
@@ -75,67 +84,92 @@ return view.extend({
 		const wg = endpoint.wireguard || {};
 		const mtg = endpoint.mtg || {};
 		const manual = !!endpoint.manual_forward_confirmed;
+		const ready = !!endpoint.ready;
 
-		const nodes = [
-			E('div', {'style': 'display:flex;justify-content:space-between;gap:12px;align-items:center;flex-wrap:wrap'}, [
-				E('div', {}, [
-					E('h2', {'style': 'margin-bottom:4px'}, _('Внешний доступ')),
-					E('p', {'style': 'margin:0'}, _('Коробка использует только public IPv4. DDNS в продукт не входит. Private WAN сам по себе не считается доказанным CGNAT.'))
-				]),
-				E('button', {
-					'class': 'btn cbi-button cbi-button-action',
-					'click': this.handleRefresh.bind(this)
-				}, _('Перепроверить сеть'))
-			]),
-			E('div', {'class': 'cbi-section', 'style': 'margin-top:16px'}, [
-				E('h3', {}, _('Диагностика')),
-				E('div', {'style': 'margin-bottom:10px'}, badge(!!endpoint.ready, endpoint.ready ? _('Endpoint готов') : _('Требует настройки'))),
-				kv(_('WAN IPv4'), access.wan_ipv4),
-				kv(_('Public IPv4'), access.public_ipv4),
-				kv(_('Тип WAN'), access.wan_scope),
-				kv(_('Режим'), access.mode),
-				kv(_('UPnP IGD'), access.upnp && access.upnp.available ? _('Доступен') : (access.probe_pending ? _('Проверяется') : _('Недоступен'))),
-				kv(_('NAT-PMP'), access.natpmp && access.natpmp.available ? _('Доступен') : (access.probe_pending ? _('Проверяется') : _('Недоступен'))),
-				kv(_('Последняя диагностика'), probeText(access)),
-				kv(_('Причина readiness'), endpoint.reason)
-			]),
-			E('div', {'class': 'cbi-section'}, [
-				E('h3', {}, _('Endpoint сервисов')),
-				kv(_('WireGuard'), wg.endpoint || wg.candidate_endpoint),
-				kv(_('Telegram MTG'), mtg.endpoint || mtg.candidate_endpoint),
-				kv(_('Ручной проброс подтверждён'), manual ? _('Да') : _('Нет'))
-			])
-		];
-
+		let actionBlock;
 		if (access.probe_pending || access.mode === 'probing') {
-			nodes.push(E('div', {'class': 'cbi-section warning'}, [
-				E('strong', {}, _('Диагностика обновляется. ')),
-				_('Обычные страницы не ждут сетевых timeout-ов. Для немедленного результата нажмите «Перепроверить сеть».')
-			]));
+			actionBlock = E('div', {'class': 'korobka-callout korobka-callout-info'}, [
+				E('div', {'class': 'korobka-callout-icon'}, '…'),
+				E('div', {}, [E('strong', {}, _('Диагностика обновляется. ')), _('Обычные страницы при этом продолжают открываться быстро.')])
+			]);
 		}
 		else if (access.mode === 'upstream_nat_no_automap') {
-			nodes.push(E('div', {'class': 'cbi-section warning'}, [
-				E('h3', {}, _('Нужен ручной port-forward')),
-				E('p', {}, _('На вышестоящем маршрутизаторе автоматический проброс недоступен. Направьте только эти два порта на WAN IPv4 Коробки:')),
-				E('table', {'class': 'table'}, [
-					E('tr', {'class': 'tr table-titles'}, [E('th', {'class': 'th'}, _('Сервис')), E('th', {'class': 'th'}, _('Протокол')), E('th', {'class': 'th'}, _('Порт')), E('th', {'class': 'th'}, _('Назначение'))]),
-					E('tr', {'class': 'tr'}, [E('td', {'class': 'td'}, 'WireGuard'), E('td', {'class': 'td'}, 'UDP'), E('td', {'class': 'td'}, String(wg.port || 51821)), E('td', {'class': 'td'}, (access.wan_ipv4 || 'WAN') + ':' + (wg.port || 51821))]),
-					E('tr', {'class': 'tr'}, [E('td', {'class': 'td'}, 'Telegram MTG'), E('td', {'class': 'td'}, 'TCP'), E('td', {'class': 'td'}, String(mtg.port || 8888)), E('td', {'class': 'td'}, (access.wan_ipv4 || 'WAN') + ':' + (mtg.port || 8888))])
+			actionBlock = E('div', {'class': 'korobka-card'}, [
+				E('div', {'class': 'korobka-card-head'}, [
+					E('h3', {}, _('Ручной port-forward')),
+					E('span', {'class': 'korobka-badge ' + (manual ? 'korobka-badge-ok' : 'korobka-badge-warn')}, manual ? _('Подтверждён') : _('Не настроен'))
 				]),
-				E('p', {'class': 'description'}, _('Подтверждение не проверяет порт из Интернета автоматически. Нажимайте только после реальной настройки вышестоящего маршрутизатора.')),
+				E('p', {'class': 'korobka-subtitle'}, _('На вышестоящем маршрутизаторе автоматический проброс недоступен. Создайте ровно два правила:')),
+				E('div', {'class': 'korobka-table-wrap', 'style': 'margin-top:12px'}, [
+					E('table', {'class': 'table korobka-table'}, [
+						E('thead', {}, E('tr', {}, [E('th', {}, _('Сервис')), E('th', {}, _('Протокол')), E('th', {}, _('Внешний порт')), E('th', {}, _('Назначение'))])),
+						E('tbody', {}, [
+							E('tr', {}, [E('td', {}, 'WireGuard'), E('td', {}, 'UDP'), E('td', {}, E('code', {'class': 'korobka-code'}, String(wg.port || 51821))), E('td', {}, E('code', {'class': 'korobka-code'}, (access.wan_ipv4 || 'WAN') + ':' + (wg.port || 51821)))]),
+							E('tr', {}, [E('td', {}, 'Telegram MTG'), E('td', {}, 'TCP'), E('td', {}, E('code', {'class': 'korobka-code'}, String(mtg.port || 8888))), E('td', {}, E('code', {'class': 'korobka-code'}, (access.wan_ipv4 || 'WAN') + ':' + (mtg.port || 8888)))])
+						])
+					])
+				]),
+				E('div', {'class': 'korobka-callout korobka-callout-warn'}, [
+					E('div', {'class': 'korobka-callout-icon'}, '!'),
+					E('div', {}, _('Подтверждение не проверяет порты из Интернета автоматически. Нажимайте только после реальной настройки вышестоящего маршрутизатора.'))
+				]),
 				manual
-					? E('button', {'class': 'btn cbi-button cbi-button-negative', 'click': this.handleConfirm.bind(this, false)}, _('Сбросить подтверждение'))
-					: E('button', {'class': 'btn cbi-button cbi-button-apply', 'click': this.handleConfirm.bind(this, true)}, _('Проброс настроен'))
-			]));
+					? E('button', {'class': 'btn cbi-button korobka-btn korobka-btn-danger', 'click': this.handleConfirm.bind(this, false)}, _('Сбросить подтверждение'))
+					: E('button', {'class': 'btn cbi-button korobka-btn korobka-btn-primary', 'click': this.handleConfirm.bind(this, true)}, _('Я настроил проброс'))
+			]);
 		}
 		else if (access.mode === 'direct_public') {
-			nodes.push(E('div', {'class': 'cbi-section'}, [E('strong', {}, _('Прямой public WAN: дополнительный NAT mapping не требуется.'))]));
+			actionBlock = E('div', {'class': 'korobka-callout korobka-callout-ok'}, [
+				E('div', {'class': 'korobka-callout-icon'}, '✓'),
+				E('div', {}, [E('strong', {}, _('Прямой public WAN. ')), _('Дополнительный NAT mapping не требуется.')])
+			]);
 		}
-		else if (access.mode === 'cgnat_suspected_no_automap') {
-			nodes.push(E('div', {'class': 'cbi-section warning'}, [E('strong', {}, _('CGNAT или дополнительный upstream NAT вероятен. ')), _('Входящий доступ может потребовать изменений у провайдера или на дополнительном маршрутизаторе.')]));
+		else {
+			actionBlock = E('div', {'class': 'korobka-callout korobka-callout-warn'}, [
+				E('div', {'class': 'korobka-callout-icon'}, '!'),
+				E('div', {}, [E('strong', {}, _('Входящий доступ требует дополнительной проверки. ')), _('Текущий режим: '), E('code', {'class': 'korobka-code'}, access.mode || 'unknown')])
+			]);
 		}
 
-		return E('div', {}, nodes);
+		return E('div', {'class': 'korobka-page'}, [
+			css(),
+			E('div', {'class': 'korobka-shell'}, [
+				E('div', {'class': 'korobka-hero'}, [
+					E('div', {}, [
+						E('h2', {'class': 'korobka-title'}, _('Внешний доступ')),
+						E('div', {'class': 'korobka-subtitle'}, _('Диагностика public IPv4 и входящих портов. DDNS в продукт не входит; предпочтителен статический public IPv4.'))
+					]),
+					E('div', {'class': 'korobka-toolbar'}, [
+						E('span', {'class': 'korobka-badge ' + (ready ? 'korobka-badge-ok' : 'korobka-badge-warn')}, ready ? _('Endpoint готов') : _('Нужна настройка')),
+						E('button', {'class': 'btn cbi-button korobka-btn korobka-btn-primary', 'click': this.handleRefresh.bind(this)}, _('Перепроверить сеть'))
+					])
+				]),
+				E('div', {'class': 'korobka-grid'}, [
+					E('div', {'class': 'korobka-card'}, [
+						E('div', {'class': 'korobka-card-head'}, [E('h3', {}, _('Диагностика')), E('span', {'class': 'korobka-badge korobka-badge-neutral'}, access.wan_scope || 'unknown')]),
+						kv(_('WAN IPv4'), access.wan_ipv4, true),
+						kv(_('Public IPv4'), access.public_ipv4, true),
+						kv(_('Режим'), access.mode),
+						kv(_('UPnP IGD'), access.upnp && access.upnp.available ? _('Доступен') : (access.probe_pending ? _('Проверяется') : _('Недоступен'))),
+						kv(_('NAT-PMP'), access.natpmp && access.natpmp.available ? _('Доступен') : (access.probe_pending ? _('Проверяется') : _('Недоступен'))),
+						kv(_('Последняя проверка'), probeText(access))
+					]),
+					E('div', {'class': 'korobka-card'}, [
+						E('div', {'class': 'korobka-card-head'}, [E('h3', {}, _('Readiness')), E('span', {'class': 'korobka-badge ' + (ready ? 'korobka-badge-ok' : 'korobka-badge-warn')}, ready ? _('Готово') : _('Ожидает действия'))]),
+						kv(_('Причина'), endpoint.reason, true),
+						kv(_('Ручной проброс'), manual ? _('Подтверждён') : _('Не подтверждён')),
+						kv(_('Источник адреса'), endpoint.address_source || 'public_ipv4')
+					])
+				]),
+				E('h3', {'class': 'korobka-section-title'}, _('Endpoint сервисов')),
+				E('div', {'class': 'korobka-grid'}, [
+					endpointCard('WireGuard', 'UDP', wg.port || 51821, wg.endpoint || wg.candidate_endpoint, !!wg.ready),
+					endpointCard('Telegram MTG', 'TCP', mtg.port || 8888, mtg.endpoint || mtg.candidate_endpoint, !!mtg.ready)
+				]),
+				E('h3', {'class': 'korobka-section-title'}, _('Что нужно сделать')),
+				actionBlock
+			])
+		]);
 	},
 
 	handleSave: null,
