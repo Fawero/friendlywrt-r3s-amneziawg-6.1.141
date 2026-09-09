@@ -41,6 +41,11 @@ for cmd in \
     [ -x "$cmd" ] || fail "validated Korobka runtime command missing: $cmd"
 done
 
+if ! ucode -e 'print(join(" ", ["korobka", "ucode", "join", "ok"]), "\n");' 2>/dev/null \
+    | grep -q '^korobka ucode join ok$'; then
+    fail "unexpected ucode join() semantics"
+fi
+
 if ! ucode -e '
     import { popen } from "fs";
     let f = popen("/bin/echo korobka-ucode-popen-ok", "r");
