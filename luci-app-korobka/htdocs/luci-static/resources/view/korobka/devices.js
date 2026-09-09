@@ -4,7 +4,6 @@
 'require view';
 
 const callStatus = rpc.declare({ object: 'luci.korobka', method: 'status' });
-const callPeers = rpc.declare({ object: 'luci.korobka', method: 'peers' });
 const callAdd = rpc.declare({ object: 'luci.korobka', method: 'add_peer', params: [ 'name' ] });
 const callRemove = rpc.declare({ object: 'luci.korobka', method: 'remove_peer', params: [ 'name' ] });
 const callQr = rpc.declare({ object: 'luci.korobka', method: 'wg_qr', params: [ 'name' ] });
@@ -31,7 +30,8 @@ function shortKey(k) {
 
 return view.extend({
 	load: function() {
-		return Promise.all([callStatus(), callPeers()]);
+		/* status already contains peers; avoid a second RPC/process on page load */
+		return callStatus();
 	},
 
 	handleAdd: function() {
@@ -80,7 +80,30 @@ return view.extend({
 		]);
 	},
 
-	handleQr: function(name) {
+	handleQr: function(name, ready, endpoint) {
+		const wgEndpoint = endpoint && endpoint.wireguard || {};
+
+		if (!ready) {
+			ui.showModal(_('QR пока не готов'), [
+				E('p', {}, _('WireGuard peer уже создан, но внешний endpoint ещё не подтверждён.')),
+				E('p', {}, [
+					_('Причина: '), E('code', {}, endpoint && endpoint.reason || 'unknown'),
+					E('br'),
+					_('Candidate: '), E('code', {}, wgEndpoint.candidate_endpoint || '—')
+				]),
+				E('p', {}, _('Настройте внешний доступ, после чего QR станет рабочим.')),
+				E('div', {'class': 'right'}, [
+					E('button', {'class': 'btn', 'click': ui.hideModal}, _('Закрыть')),
+					' ',
+					E('button', {
+						'class': 'btn cbi-button cbi-button-action',
+						'click': function() { window.location.href = L.url('admin/korobka/access'); }
+					}, _('Внешний доступ'))
+				])
+			]);
+			return;
+		}
+
 		ui.showModal(_('QR WireGuard'), [E('p', {'class': 'spinning'}, _('Генерируем клиентский конфиг…'))]);
 		return callQr(name).then(function(res) {
 			ui.hideModal();
@@ -96,9 +119,8 @@ return view.extend({
 	},
 
 	render: function(data) {
-		const status = data[0] || {};
-		const peerReply = data[1] || {};
-		const peers = Array.isArray(peerReply.peers) ? peerReply.peers : [];
+		const status = data || {};
+		const peers = Array.isArray(status.peers) ? status.peers : [];
 		const endpoint = status.endpoint || {};
 		const ready = !!(endpoint.wireguard && endpoint.wireguard.ready);
 
@@ -116,10 +138,9 @@ return view.extend({
 			const actions = E('div', {}, [
 				E('button', {
 					'class': 'btn cbi-button cbi-button-action',
-					'disabled': ready ? null : 'disabled',
-					'title': ready ? _('Показать QR') : _('Внешний endpoint ещё не готов'),
-					'click': this.handleQr.bind(this, p.name)
-				}, _('QR')),
+					'title': ready ? _('Показать QR') : _('Показать, что нужно для активации QR'),
+					'click': this.handleQr.bind(this, p.name, ready, endpoint)
+				}, ready ? _('QR') : _('QR / настройка')),
 				' ',
 				E('button', {
 					'class': 'btn cbi-button cbi-button-negative',
@@ -146,10 +167,8 @@ return view.extend({
 
 		if (!ready) {
 			nodes.push(E('div', {'class': 'cbi-section warning'}, [
-				E('strong', {}, _('QR пока заблокирован. ')),
-				_('Endpoint не готов: '), E('code', {}, endpoint.reason || 'unknown'),
-				E('br'),
-				_('Candidate: '), E('code', {}, endpoint.wireguard && endpoint.wireguard.candidate_endpoint || '—')
+				E('strong', {}, _('Внешний endpoint ещё не готов. ')),
+				_('QR-кнопки доступны для объяснения следующего шага; рабочий QR будет выдан после настройки внешнего доступа.')
 			]));
 		}
 
