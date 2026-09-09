@@ -27,6 +27,7 @@ rpc_must_succeed() {
 
 [ -d "$APP/htdocs" ] || fail "luci-app-korobka source directory not found"
 [ -d "$APP/root" ] || fail "luci-app-korobka root directory not found"
+[ -f "$APP/htdocs/luci-static/resources/korobka/korobka.css" ] || fail "Korobka CSS missing"
 
 for f in \
     "$RUNTIME/korobka-public-access" \
@@ -64,6 +65,7 @@ fi
 
 mkdir -p \
     /www/luci-static/resources/view/korobka \
+    /www/luci-static/resources/korobka \
     /usr/share/luci/menu.d \
     /usr/share/rpcd/acl.d \
     /usr/share/rpcd/ucode
@@ -72,6 +74,7 @@ cp -f "$APP/htdocs/luci-static/resources/view/korobka/overview.js" /www/luci-sta
 cp -f "$APP/htdocs/luci-static/resources/view/korobka/devices.js" /www/luci-static/resources/view/korobka/devices.js
 cp -f "$APP/htdocs/luci-static/resources/view/korobka/telegram.js" /www/luci-static/resources/view/korobka/telegram.js
 cp -f "$APP/htdocs/luci-static/resources/view/korobka/access.js" /www/luci-static/resources/view/korobka/access.js
+cp -f "$APP/htdocs/luci-static/resources/korobka/korobka.css" /www/luci-static/resources/korobka/korobka.css
 
 cp -f "$APP/root/usr/share/luci/menu.d/luci-app-korobka.json" /usr/share/luci/menu.d/luci-app-korobka.json
 cp -f "$APP/root/usr/share/rpcd/acl.d/luci-app-korobka.json" /usr/share/rpcd/acl.d/luci-app-korobka.json
@@ -83,6 +86,7 @@ cp -f "$RUNTIME/korobka-ui-status" /usr/bin/korobka-ui-status
 
 chmod 0644 \
     /www/luci-static/resources/view/korobka/*.js \
+    /www/luci-static/resources/korobka/korobka.css \
     /usr/share/luci/menu.d/luci-app-korobka.json \
     /usr/share/rpcd/acl.d/luci-app-korobka.json
 chmod 0755 \
