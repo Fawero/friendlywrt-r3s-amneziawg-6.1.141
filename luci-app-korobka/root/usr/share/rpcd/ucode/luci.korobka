@@ -15,7 +15,6 @@ function commandline(argv) {
     for (let i = 0; i < length(argv); i++)
         push(parts, shellquote(argv[i]));
 
-    /* ucode join() signature is join(separator, array). */
     return join(' ', parts);
 }
 
@@ -94,6 +93,20 @@ function mtg_qr_svg() {
     );
 }
 
+function support_qr_svg() {
+    const path = '/etc/korobka/support/bundle.json';
+
+    if (!access('/usr/bin/qrencode', 'x'))
+        return { error: 'qrencode is not installed' };
+    if (!readfile(path))
+        return { error: 'Support bundle is not available' };
+
+    return run_svg(sprintf(
+        "/usr/bin/qrencode -t SVG -o - < %s 2>/dev/null",
+        shellquote(path)
+    ));
+}
+
 const methods = {
     status: {
         call: function() {
@@ -122,7 +135,6 @@ const methods = {
             if (type(peers) != 'array')
                 return { error: 'Unexpected peers response type' };
 
-            /* rpcd ucode method callbacks must return a dictionary. */
             return { peers };
         }
     },
@@ -189,7 +201,6 @@ const methods = {
 
             try {
                 const parsed = json(access_data);
-
                 if (!parsed?.ipv4?.tme_url)
                     return { error: 'Telegram proxy URL is missing' };
             }
@@ -198,6 +209,29 @@ const methods = {
             }
 
             return mtg_qr_svg();
+        }
+    },
+
+    support_enable: {
+        call: function() {
+            return run_json(['/usr/bin/korobka-support', 'enable']);
+        }
+    },
+
+    support_disable: {
+        call: function() {
+            return run_json(['/usr/bin/korobka-support', 'disable']);
+        }
+    },
+
+    support_qr: {
+        call: function() {
+            const state = run_json(['/usr/bin/korobka-support', 'status']);
+            if (state.error)
+                return state;
+            if (state.enabled != true)
+                return { error: 'Support session is not enabled' };
+            return support_qr_svg();
         }
     },
 
