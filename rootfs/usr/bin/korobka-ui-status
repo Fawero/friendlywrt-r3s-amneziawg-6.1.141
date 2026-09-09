@@ -4,18 +4,11 @@ bool() {
     "$@" >/dev/null 2>&1 && echo true || echo false
 }
 
-json_or() {
-    out="$($1 ${2:-} 2>/dev/null)"
-    if printf '%s' "$out" | jq -e . >/dev/null 2>&1; then
-        printf '%s' "$out"
-    else
-        printf '%s' "$3"
-    fi
-}
-
 ACCESS="$(/usr/bin/korobka-public-access status 2>/dev/null || echo '{}')"
 ENDPOINT="$(/usr/bin/korobka-endpoint status 2>/dev/null || echo '{}')"
 PEERS="$(/usr/bin/korobka-wg-peer list 2>/dev/null || echo '[]')"
+LOCAL_MANAGEMENT="$([ -x /usr/bin/korobka-local-management ] && /usr/bin/korobka-local-management status 2>/dev/null || echo '{}')"
+SUPPORT="$([ -x /usr/bin/korobka-support ] && /usr/bin/korobka-support status 2>/dev/null || echo '{"enabled":false}')"
 
 awg_state() {
     name="$1"
@@ -60,6 +53,8 @@ jq -n \
     --argjson access "$ACCESS" \
     --argjson endpoint "$ENDPOINT" \
     --argjson peers "$PEERS" \
+    --argjson local_management "$LOCAL_MANAGEMENT" \
+    --argjson support "$SUPPORT" \
     --argjson awg_warp "$AWG_WARP" \
     --argjson awg_lu "$AWG_LU" \
     --argjson awg_kz "$AWG_KZ" \
@@ -75,6 +70,8 @@ jq -n \
     access: $access,
     endpoint: $endpoint,
     peers: $peers,
+    local_management: $local_management,
+    support: $support,
     awg: {
         warp: $awg_warp,
         lu: $awg_lu,
