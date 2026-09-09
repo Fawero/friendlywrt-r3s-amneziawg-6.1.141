@@ -1,0 +1,158 @@
+#!/usr/bin/env ucode
+
+'use strict';
+
+import { access, popen, readfile } from 'fs';
+import { cursor } from 'uci';
+
+function run_json(argv) {
+    const proc = popen(argv, 'r');
+    if (!proc)
+        return { error: 'Unable to start command' };
+
+    let result;
+    try {
+        result = json(proc);
+    }
+    catch (err) {
+        const raw = proc.read('all');
+        proc.close();
+        return { error: 'Invalid command response', detail: raw || `${err}` };
+    }
+
+    const rc = proc.close();
+    if (rc != 0)
+        return { error: `Command failed with exit code ${rc}` };
+
+    return result;
+}
+
+function run_text(argv) {
+    const proc = popen(argv, 'r');
+    if (!proc)
+        return { rc: 127, output: '' };
+
+    const output = proc.read('all') || '';
+    const rc = proc.close();
+    return { rc, output };
+}
+
+function valid_peer_name(name) {
+    return type(name) == 'string' && match(name, /^[A-Za-z0-9_]+$/) != null;
+}
+
+function qr_svg(data) {
+    if (!access('/usr/bin/qrencode', 'x'))
+        return { error: 'qrencode is not installed' };
+
+    const proc = popen(['/usr/bin/qrencode', '-t', 'SVG', '-o', '-', data], 'r');
+    if (!proc)
+        return { error: 'Unable to start qrencode' };
+
+    const svg = proc.read('all') || '';
+    const rc = proc.close();
+
+    if (rc != 0 || !length(svg))
+        return { error: `qrencode failed with exit code ${rc}` };
+
+    return { svg };
+}
+
+const methods = {
+    status: {
+        call: function() {
+            return run_json(['/usr/bin/korobka-ui-status']);
+        }
+    },
+
+    peers: {
+        call: function() {
+            return run_json(['/usr/bin/korobka-wg-peer', 'list']);
+        }
+    },
+
+    add_peer: {
+        args: { name: '' },
+        call: function(request) {
+            const name = request.args?.name || '';
+            if (name && !valid_peer_name(name))
+                return { error: 'Peer name may contain only letters, numbers and underscore' };
+
+            return name
+                ? run_json(['/usr/bin/korobka-wg-peer', 'add', name])
+                : run_json(['/usr/bin/korobka-wg-peer', 'add']);
+        }
+    },
+
+    remove_peer: {
+        args: { name: '' },
+        call: function(request) {
+            const name = request.args?.name || '';
+            if (!valid_peer_name(name))
+                return { error: 'Invalid peer name' };
+
+            return run_json(['/usr/bin/korobka-wg-peer', 'remove', name]);
+        }
+    },
+
+    wg_qr: {
+        args: { name: '' },
+        call: function(request) {
+            const name = request.args?.name || '';
+            if (!valid_peer_name(name))
+                return { error: 'Invalid peer name' };
+
+            const gen = run_text(['/usr/bin/korobka-wg-client', 'generate', name]);
+            if (gen.rc != 0)
+                return { error: trim(gen.output) || 'WireGuard client config is not ready' };
+
+            const path = `/etc/korobka/wireguard/peers/${name}/client.conf`;
+            const config = readfile(path);
+            if (!config)
+                return { error: 'Generated client config is missing' };
+
+            return qr_svg(config);
+        }
+    },
+
+    mtg_qr: {
+        call: function() {
+            const gen = run_text(['/usr/bin/korobka-mtg-access', 'generate']);
+            if (gen.rc != 0)
+                return { error: trim(gen.output) || 'Telegram access data is not ready' };
+
+            const access_data = readfile('/etc/korobka/mtg/access.json');
+            if (!access_data)
+                return { error: 'MTG access data is missing' };
+
+            let parsed;
+            try {
+                parsed = json(access_data);
+            }
+            catch (err) {
+                return { error: 'MTG access data is invalid' };
+            }
+
+            const url = parsed?.ipv4?.tme_url;
+            if (!url)
+                return { error: 'Telegram proxy URL is missing' };
+
+            return qr_svg(url);
+        }
+    },
+
+    set_manual_forward: {
+        args: { confirmed: false },
+        call: function(request) {
+            const confirmed = request.args?.confirmed == true;
+            const uci = cursor();
+            uci.set('korobka', 'endpoint', 'manual_forward_confirmed', confirmed ? '1' : '0');
+            const ok = uci.commit('korobka');
+            uci.unload();
+
+            return { ok: ok == true, confirmed };
+        }
+    }
+};
+
+return { 'luci.korobka': methods };

@@ -1,0 +1,101 @@
+#!/bin/sh
+
+bool() {
+    "$@" >/dev/null 2>&1 && echo true || echo false
+}
+
+json_or() {
+    out="$($1 ${2:-} 2>/dev/null)"
+    if printf '%s' "$out" | jq -e . >/dev/null 2>&1; then
+        printf '%s' "$out"
+    else
+        printf '%s' "$3"
+    fi
+}
+
+ACCESS="$(/usr/bin/korobka-public-access status 2>/dev/null || echo '{}')"
+ENDPOINT="$(/usr/bin/korobka-endpoint status 2>/dev/null || echo '{}')"
+PEERS="$(/usr/bin/korobka-wg-peer list 2>/dev/null || echo '[]')"
+
+awg_state() {
+    name="$1"
+    up=false
+    if [ "$(ifstatus "$name" 2>/dev/null | jsonfilter -e '@.up' 2>/dev/null)" = "true" ]; then
+        up=true
+    fi
+
+    handshake="$(awg show "$name" latest-handshakes 2>/dev/null | awk 'NR==1 {print $2}')"
+    rx="$(awg show "$name" transfer 2>/dev/null | awk 'NR==1 {print $2}')"
+    tx="$(awg show "$name" transfer 2>/dev/null | awk 'NR==1 {print $3}')"
+
+    [ -n "$handshake" ] || handshake=0
+    [ -n "$rx" ] || rx=0
+    [ -n "$tx" ] || tx=0
+
+    jq -n \
+        --arg name "$name" \
+        --argjson up "$up" \
+        --argjson latest_handshake "$handshake" \
+        --argjson rx_bytes "$rx" \
+        --argjson tx_bytes "$tx" \
+        '{name:$name,up:$up,latest_handshake:$latest_handshake,rx_bytes:$rx_bytes,tx_bytes:$tx_bytes}'
+}
+
+AWG_WARP="$(awg_state awg_warp)"
+AWG_LU="$(awg_state awg_lu)"
+AWG_KZ="$(awg_state awg_kz)"
+
+SINGBOX_RUNNING=$(bool pgrep -f '/usr/bin/sing-box run')
+SOCKS_READY=$(bool sh -c "netstat -lnt 2>/dev/null | grep -q '127\\.0\\.0\\.1:4534'")
+WG_RUNNING=$(bool wg show wg_clients)
+MTG_RUNNING=$(bool /etc/init.d/mtg running)
+MTG_LISTENING=$(bool sh -c "netstat -lnt 2>/dev/null | grep -q ':8888 '")
+PODKOP_ENABLED=$(bool /etc/init.d/podkop enabled)
+MTG_ENABLED=$(bool /etc/init.d/mtg enabled)
+
+WG_LISTEN_PORT="$(wg show wg_clients listen-port 2>/dev/null | head -1)"
+[ -n "$WG_LISTEN_PORT" ] || WG_LISTEN_PORT=0
+
+jq -n \
+    --argjson access "$ACCESS" \
+    --argjson endpoint "$ENDPOINT" \
+    --argjson peers "$PEERS" \
+    --argjson awg_warp "$AWG_WARP" \
+    --argjson awg_lu "$AWG_LU" \
+    --argjson awg_kz "$AWG_KZ" \
+    --argjson singbox_running "$SINGBOX_RUNNING" \
+    --argjson socks_ready "$SOCKS_READY" \
+    --argjson wg_running "$WG_RUNNING" \
+    --argjson mtg_running "$MTG_RUNNING" \
+    --argjson mtg_listening "$MTG_LISTENING" \
+    --argjson podkop_enabled "$PODKOP_ENABLED" \
+    --argjson mtg_enabled "$MTG_ENABLED" \
+    --argjson wg_listen_port "$WG_LISTEN_PORT" \
+'{
+    access: $access,
+    endpoint: $endpoint,
+    peers: $peers,
+    awg: {
+        warp: $awg_warp,
+        lu: $awg_lu,
+        kz: $awg_kz
+    },
+    podkop: {
+        enabled: $podkop_enabled,
+        sing_box_running: $singbox_running,
+        telegram_socks_ready: $socks_ready,
+        telegram_socks: "127.0.0.1:4534"
+    },
+    wireguard: {
+        running: $wg_running,
+        listen_port: $wg_listen_port,
+        peer_count: ($peers | length)
+    },
+    mtg: {
+        enabled: $mtg_enabled,
+        running: $mtg_running,
+        listening: $mtg_listening,
+        listen_port: 8888,
+        outbound: "awg_warp"
+    }
+}'

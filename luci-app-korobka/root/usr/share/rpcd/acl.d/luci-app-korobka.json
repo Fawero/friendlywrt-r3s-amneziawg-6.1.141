@@ -1,0 +1,31 @@
+{
+  "luci-app-korobka": {
+    "description": "Grant access to Korobka management RPC methods",
+    "read": {
+      "ubus": {
+        "luci.korobka": [
+          "status",
+          "peers"
+        ]
+      },
+      "uci": [
+        "korobka"
+      ]
+    },
+    "write": {
+      "ubus": {
+        "luci.korobka": [
+          "add_peer",
+          "remove_peer",
+          "wg_qr",
+          "mtg_qr",
+          "set_manual_forward"
+        ]
+      },
+      "uci": [
+        "korobka",
+        "network"
+      ]
+    }
+  }
+}
