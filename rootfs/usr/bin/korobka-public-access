@@ -4,11 +4,18 @@ WAN_IF="${WAN_IF:-eth0}"
 WG_PORT="${WG_PORT:-51821}"
 MTG_PORT="${MTG_PORT:-8888}"
 ACTION="${1:-status}"
+CACHE_FILE="${KOROBKA_PUBLIC_ACCESS_CACHE:-/tmp/korobka-public-access.json}"
+LOCK_DIR="${KOROBKA_PUBLIC_ACCESS_LOCK:-/tmp/korobka-public-access.refresh.lock}"
+CACHE_TTL="${KOROBKA_PUBLIC_ACCESS_TTL:-300}"
+PROBE_TIMEOUT="${KOROBKA_PUBLIC_ACCESS_PROBE_TIMEOUT:-5}"
 
-get_state() {
+now_epoch() {
+    date +%s
+}
+
+load_local_state() {
     wan_ip="$(ip -4 -o addr show dev "$WAN_IF" 2>/dev/null | awk '{print $4}' | cut -d/ -f1 | head -1)"
     gateway="$(ip -4 route show default 2>/dev/null | awk '/default/ {print $3; exit}')"
-    public_ip="$(curl -4 --interface "$WAN_IF" --connect-timeout 5 --max-time 8 -sS https://api.ipify.org 2>/dev/null || true)"
 
     wan_scope="unknown"
     wan_public=false
@@ -19,47 +26,23 @@ get_state() {
         "") wan_scope="missing" ;;
         *) wan_scope="public"; wan_public=true ;;
     esac
-
-    upnp_available=false
-    upnp_external_ip=""
-    if command -v upnpc >/dev/null 2>&1; then
-        upnp_out="$(timeout 8 upnpc -s 2>&1 || true)"
-        if ! echo "$upnp_out" | grep -q 'No IGD UPnP Device found'; then
-            upnp_external_ip="$(echo "$upnp_out" | sed -nE 's/.*ExternalIPAddress[[:space:]]*=[[:space:]]*([0-9.]+).*/\1/p' | head -1)"
-            [ -n "$upnp_external_ip" ] && upnp_available=true
-        fi
-    fi
-
-    natpmp_available=false
-    natpmp_external_ip=""
-    if command -v natpmpc >/dev/null 2>&1 && [ -n "$gateway" ]; then
-        natpmp_out="$(timeout 8 natpmpc -g "$gateway" 2>&1 || true)"
-        natpmp_external_ip="$(echo "$natpmp_out" | sed -nE 's/.*Public IP address[[:space:]]*:[[:space:]]*([0-9.]+).*/\1/p' | head -1)"
-        [ -n "$natpmp_external_ip" ] && natpmp_available=true
-    fi
-
-    mode="unknown"
-    if [ "$wan_public" = true ]; then
-        if [ -n "$public_ip" ] && [ "$wan_ip" = "$public_ip" ]; then
-            mode="direct_public"
-        else
-            mode="public_wan_address_mismatch"
-        fi
-    else
-        if [ "$upnp_available" = true ]; then
-            mode="upstream_nat_upnp"
-        elif [ "$natpmp_available" = true ]; then
-            mode="upstream_nat_natpmp"
-        elif [ "$wan_scope" = "shared_cgnat_range" ]; then
-            mode="cgnat_suspected_no_automap"
-        else
-            mode="upstream_nat_no_automap"
-        fi
-    fi
 }
 
-print_status() {
-    get_state
+valid_ipv4() {
+    echo "$1" | grep -Eq '^[0-9]{1,3}(\.[0-9]{1,3}){3}$'
+}
+
+build_json() {
+    public_ip="$1"
+    upnp_available="$2"
+    upnp_external_ip="$3"
+    natpmp_available="$4"
+    natpmp_external_ip="$5"
+    mode="$6"
+    observed_at="$7"
+    source="$8"
+    probe_pending="$9"
+
     jq -n \
         --arg wan_interface "$WAN_IF" \
         --arg wan_ipv4 "$wan_ip" \
@@ -69,11 +52,14 @@ print_status() {
         --arg upnp_external_ipv4 "$upnp_external_ip" \
         --arg natpmp_external_ipv4 "$natpmp_external_ip" \
         --arg mode "$mode" \
+        --arg source "$source" \
         --argjson wan_public "$wan_public" \
         --argjson upnp_available "$upnp_available" \
         --argjson natpmp_available "$natpmp_available" \
         --argjson wireguard_port "$WG_PORT" \
         --argjson mtg_port "$MTG_PORT" \
+        --argjson observed_at "$observed_at" \
+        --argjson probe_pending "$probe_pending" \
     '{
         wan_interface: $wan_interface,
         wan_ipv4: $wan_ipv4,
@@ -87,32 +73,268 @@ print_status() {
             wireguard: {protocol: "udp", port: $wireguard_port},
             mtg: {protocol: "tcp", port: $mtg_port}
         },
-        mode: $mode
+        mode: $mode,
+        observed_at: $observed_at,
+        source: $source,
+        probe_pending: $probe_pending
     }'
 }
 
+quick_status() {
+    load_local_state
+
+    public_ip=""
+    mode="probing"
+
+    if [ "$wan_public" = true ]; then
+        public_ip="$wan_ip"
+        mode="direct_public"
+    elif [ "$wan_scope" = "shared_cgnat_range" ]; then
+        mode="cgnat_suspected_no_automap"
+    fi
+
+    build_json "$public_ip" false "" false "" "$mode" 0 "local" true |
+        jq '. + {cache:{hit:false,stale:true,age_seconds:null}}'
+}
+
+cache_is_usable() {
+    [ -s "$CACHE_FILE" ] || return 1
+    jq -e . "$CACHE_FILE" >/dev/null 2>&1 || return 1
+
+    cached_if="$(jq -r '.wan_interface // empty' "$CACHE_FILE" 2>/dev/null)"
+    cached_wan="$(jq -r '.wan_ipv4 // empty' "$CACHE_FILE" 2>/dev/null)"
+    cached_gw="$(jq -r '.gateway_ipv4 // empty' "$CACHE_FILE" 2>/dev/null)"
+
+    [ "$cached_if" = "$WAN_IF" ] || return 1
+    [ "$cached_wan" = "$wan_ip" ] || return 1
+    [ "$cached_gw" = "$gateway" ] || return 1
+    return 0
+}
+
+lock_is_stale() {
+    [ -d "$LOCK_DIR" ] || return 1
+    lock_mtime="$(stat -c '%Y' "$LOCK_DIR" 2>/dev/null || echo 0)"
+    now="$(now_epoch)"
+    [ "$lock_mtime" -gt 0 ] || return 0
+    [ $((now - lock_mtime)) -gt 15 ]
+}
+
+acquire_lock() {
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        return 0
+    fi
+
+    if lock_is_stale; then
+        rmdir "$LOCK_DIR" 2>/dev/null || true
+        mkdir "$LOCK_DIR" 2>/dev/null && return 0
+    fi
+
+    return 1
+}
+
+release_lock() {
+    rmdir "$LOCK_DIR" 2>/dev/null || true
+}
+
+probe_state() {
+    load_local_state
+
+    base="/tmp/korobka-public-access-probe-$$"
+    public_file="${base}.public"
+    upnp_file="${base}.upnp"
+    natpmp_file="${base}.natpmp"
+    cache_tmp="${CACHE_FILE}.$$"
+
+    : > "$public_file"
+    : > "$upnp_file"
+    : > "$natpmp_file"
+
+    (
+        curl -4 --interface "$WAN_IF" \
+            --connect-timeout "$PROBE_TIMEOUT" \
+            --max-time "$PROBE_TIMEOUT" \
+            -sS https://api.ipify.org > "$public_file" 2>/dev/null || true
+    ) &
+    p_public=$!
+
+    (
+        if command -v upnpc >/dev/null 2>&1; then
+            timeout "$PROBE_TIMEOUT" upnpc -s > "$upnp_file" 2>&1 || true
+        fi
+    ) &
+    p_upnp=$!
+
+    (
+        if command -v natpmpc >/dev/null 2>&1 && [ -n "$gateway" ]; then
+            timeout "$PROBE_TIMEOUT" natpmpc -g "$gateway" > "$natpmp_file" 2>&1 || true
+        fi
+    ) &
+    p_natpmp=$!
+
+    wait "$p_public" 2>/dev/null || true
+    wait "$p_upnp" 2>/dev/null || true
+    wait "$p_natpmp" 2>/dev/null || true
+
+    public_ip="$(tr -d '\r\n ' < "$public_file" | head -c 64)"
+    valid_ipv4 "$public_ip" || public_ip=""
+
+    if [ "$wan_public" = true ] && [ -z "$public_ip" ]; then
+        public_ip="$wan_ip"
+    fi
+
+    upnp_available=false
+    upnp_external_ip="$(sed -nE 's/.*ExternalIPAddress[[:space:]]*=[[:space:]]*([0-9.]+).*/\1/p' "$upnp_file" | head -1)"
+    if [ -n "$upnp_external_ip" ] && valid_ipv4 "$upnp_external_ip"; then
+        upnp_available=true
+    else
+        upnp_external_ip=""
+    fi
+
+    natpmp_available=false
+    natpmp_external_ip="$(sed -nE 's/.*Public IP address[[:space:]]*:[[:space:]]*([0-9.]+).*/\1/p' "$natpmp_file" | head -1)"
+    if [ -n "$natpmp_external_ip" ] && valid_ipv4 "$natpmp_external_ip"; then
+        natpmp_available=true
+    else
+        natpmp_external_ip=""
+    fi
+
+    mode="unknown"
+    if [ "$wan_public" = true ]; then
+        if [ -n "$public_ip" ] && [ "$wan_ip" != "$public_ip" ]; then
+            mode="public_wan_address_mismatch"
+        else
+            mode="direct_public"
+        fi
+    else
+        if [ "$upnp_available" = true ]; then
+            mode="upstream_nat_upnp"
+        elif [ "$natpmp_available" = true ]; then
+            mode="upstream_nat_natpmp"
+        elif [ "$wan_scope" = "shared_cgnat_range" ]; then
+            mode="cgnat_suspected_no_automap"
+        else
+            mode="upstream_nat_no_automap"
+        fi
+    fi
+
+    observed_at="$(now_epoch)"
+
+    build_json "$public_ip" "$upnp_available" "$upnp_external_ip" \
+        "$natpmp_available" "$natpmp_external_ip" "$mode" \
+        "$observed_at" "probe" false > "$cache_tmp"
+
+    if jq -e . "$cache_tmp" >/dev/null 2>&1; then
+        mv "$cache_tmp" "$CACHE_FILE"
+    else
+        rm -f "$cache_tmp"
+    fi
+
+    rm -f "$public_file" "$upnp_file" "$natpmp_file"
+
+    cat "$CACHE_FILE"
+}
+
+trigger_background_refresh() {
+    if acquire_lock; then
+        (
+            trap 'release_lock' EXIT INT TERM
+            probe_state >/dev/null 2>&1 || true
+        ) >/dev/null 2>&1 &
+    fi
+}
+
+refresh_foreground() {
+    if acquire_lock; then
+        trap 'release_lock' EXIT INT TERM
+        probe_state
+        release_lock
+        trap - EXIT INT TERM
+        return 0
+    fi
+
+    n=0
+    while [ -d "$LOCK_DIR" ] && [ "$n" -lt $((PROBE_TIMEOUT + 2)) ]; do
+        sleep 1
+        n=$((n + 1))
+    done
+
+    load_local_state
+    if cache_is_usable; then
+        cat "$CACHE_FILE"
+        return 0
+    fi
+
+    if acquire_lock; then
+        trap 'release_lock' EXIT INT TERM
+        probe_state
+        release_lock
+        trap - EXIT INT TERM
+        return 0
+    fi
+
+    quick_status
+}
+
+print_status() {
+    load_local_state
+
+    if cache_is_usable; then
+        now="$(now_epoch)"
+        observed="$(jq -r '.observed_at // 0' "$CACHE_FILE")"
+        case "$observed" in ''|*[!0-9]*) observed=0 ;; esac
+        age=$((now - observed))
+        [ "$age" -ge 0 ] || age=0
+
+        stale=false
+        pending=false
+        if [ "$observed" -eq 0 ] || [ "$age" -gt "$CACHE_TTL" ]; then
+            stale=true
+            pending=true
+            trigger_background_refresh
+        fi
+
+        jq \
+            --argjson age "$age" \
+            --argjson stale "$stale" \
+            --argjson pending "$pending" \
+            '.probe_pending=$pending | . + {cache:{hit:true,stale:$stale,age_seconds:$age}}' \
+            "$CACHE_FILE"
+        return 0
+    fi
+
+    trigger_background_refresh
+    quick_status
+}
+
 print_plan() {
-    get_state
+    state="$(print_status)"
+    mode="$(echo "$state" | jq -r '.mode // "unknown"')"
+    wan="$(echo "$state" | jq -r '.wan_ipv4 // empty')"
+    public="$(echo "$state" | jq -r '.public_ipv4 // empty')"
+
     case "$mode" in
         direct_public)
-            jq -n --arg ip "$public_ip" --argjson wg "$WG_PORT" --argjson mtg "$MTG_PORT" \
+            jq -n --arg ip "$public" --argjson wg "$WG_PORT" --argjson mtg "$MTG_PORT" \
             '{mode:"direct_public",action:"none",automatic:true,endpoint_ipv4:$ip,mappings_required:false,wireguard:{protocol:"udp",port:$wg},mtg:{protocol:"tcp",port:$mtg}}'
             ;;
         upstream_nat_upnp)
-            jq -n --arg wan "$wan_ip" --arg public "$public_ip" --argjson wg "$WG_PORT" --argjson mtg "$MTG_PORT" \
+            jq -n --arg wan "$wan" --arg public "$public" --argjson wg "$WG_PORT" --argjson mtg "$MTG_PORT" \
             '{mode:"upstream_nat_upnp",action:"create_upnp_mappings",automatic:true,internal_ipv4:$wan,endpoint_ipv4:$public,mappings:[{protocol:"udp",external_port:$wg,internal_port:$wg,service:"wireguard"},{protocol:"tcp",external_port:$mtg,internal_port:$mtg,service:"mtg"}]}'
             ;;
         upstream_nat_natpmp)
-            jq -n --arg wan "$wan_ip" --arg public "$public_ip" --argjson wg "$WG_PORT" --argjson mtg "$MTG_PORT" \
+            jq -n --arg wan "$wan" --arg public "$public" --argjson wg "$WG_PORT" --argjson mtg "$MTG_PORT" \
             '{mode:"upstream_nat_natpmp",action:"create_natpmp_mappings",automatic:true,internal_ipv4:$wan,endpoint_ipv4:$public,mappings:[{protocol:"udp",external_port:$wg,internal_port:$wg,service:"wireguard"},{protocol:"tcp",external_port:$mtg,internal_port:$mtg,service:"mtg"}]}'
             ;;
         upstream_nat_no_automap)
-            jq -n --arg wan "$wan_ip" --arg public "$public_ip" --argjson wg "$WG_PORT" --argjson mtg "$MTG_PORT" \
+            jq -n --arg wan "$wan" --arg public "$public" --argjson wg "$WG_PORT" --argjson mtg "$MTG_PORT" \
             '{mode:"upstream_nat_no_automap",action:"manual_port_forward",automatic:false,internal_ipv4:$wan,observed_public_ipv4:$public,instructions:[{protocol:"udp",external_port:$wg,internal_ipv4:$wan,internal_port:$wg,service:"wireguard"},{protocol:"tcp",external_port:$mtg,internal_ipv4:$wan,internal_port:$mtg,service:"mtg"}]}'
             ;;
         cgnat_suspected_no_automap)
-            jq -n --arg wan "$wan_ip" --arg public "$public_ip" \
+            jq -n --arg wan "$wan" --arg public "$public" \
             '{mode:"cgnat_suspected_no_automap",action:"external_access_unavailable_or_manual",automatic:false,wan_ipv4:$wan,observed_public_ipv4:$public,warning:"CGNAT or additional upstream NAT is suspected"}'
+            ;;
+        probing)
+            jq -n '{mode:"probing",action:"wait_for_probe",automatic:true}'
             ;;
         *)
             jq -n --arg mode "$mode" '{mode:$mode,action:"diagnose",automatic:false}'
@@ -122,9 +344,10 @@ print_plan() {
 
 case "$ACTION" in
     status) print_status ;;
+    refresh) refresh_foreground ;;
     plan) print_plan ;;
     *)
-        echo "Usage: $0 {status|plan}" >&2
+        echo "Usage: $0 {status|refresh|plan}" >&2
         echo "Automatic apply/remove is intentionally not shipped until mapping ownership and NAT-PMP lease renewal are implemented." >&2
         exit 2
         ;;
