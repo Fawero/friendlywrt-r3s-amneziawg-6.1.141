@@ -50,11 +50,28 @@ echo "===== 2. SUPPORT DEFAULT ====="
 SUPPORT="$(/usr/bin/korobka-support status)" || fail "support default status"
 echo "$SUPPORT" | jq .
 echo "$SUPPORT" | jq -e '.enabled == false' >/dev/null || fail "support default disabled"
-
 uci -q get firewall.korobka_support >/dev/null 2>&1 && fail "support firewall exists while disabled" || true
 
 echo
-echo "===== 3. SUPPORT RPC ENABLE ====="
+echo "===== 3. DIRECT CLI JSON CONTRACT ====="
+CLI_ENABLE="$(/usr/bin/korobka-support enable 10)" || fail "direct support enable"
+printf '%s\n' "$CLI_ENABLE" | jq .
+printf '%s\n' "$CLI_ENABLE" | jq -e '
+    type == "object" and
+    .enabled == true and
+    (.port >= 30000) and
+    (.port < 60000) and
+    .listener == true
+' >/dev/null || fail "support CLI stdout is not clean JSON"
+CLI_PORT="$(printf '%s\n' "$CLI_ENABLE" | jq -r '.port')"
+echo "direct CLI JSON=OK port=$CLI_PORT"
+/usr/bin/korobka-support disable >/dev/null || fail "direct support disable"
+
+sleep 1
+netstat -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${CLI_PORT}$" && fail "direct CLI listener remains after disable" || true
+
+echo
+echo "===== 4. SUPPORT RPC ENABLE ====="
 ENABLE="$(ubus call luci.korobka support_enable)" || fail "support_enable transport"
 echo "$ENABLE" | jq .
 echo "$ENABLE" | jq -e '
@@ -83,7 +100,7 @@ if grep -q 'BEGIN OPENSSH PRIVATE KEY' /etc/korobka/support/state.json 2>/dev/nu
 fi
 
 echo
-echo "===== 4. SUPPORT QR ====="
+echo "===== 5. SUPPORT QR ====="
 ubus call luci.korobka support_qr > /tmp/korobka-support-qr-test.json || fail "support_qr transport"
 QR_LEN="$(jq -r '.svg // "" | length' /tmp/korobka-support-qr-test.json)"
 echo "support QR SVG bytes=$QR_LEN"
@@ -91,7 +108,7 @@ echo "support QR SVG bytes=$QR_LEN"
 rm -f /tmp/korobka-support-qr-test.json
 
 echo
-echo "===== 5. SUPPORT RPC DISABLE ====="
+echo "===== 6. SUPPORT RPC DISABLE ====="
 DISABLE="$(ubus call luci.korobka support_disable)" || fail "support_disable transport"
 echo "$DISABLE" | jq .
 echo "$DISABLE" | jq -e '.enabled == false and .ok == true' >/dev/null || fail "support disable response"
@@ -100,11 +117,10 @@ sleep 1
 netstat -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${PORT}$" && fail "support listener remains after disable" || true
 uci -q get firewall.korobka_support >/dev/null 2>&1 && fail "support firewall remains after disable" || true
 [ ! -e /etc/korobka/support ] || fail "support secret directory remains after disable"
-
 echo "support disable cleanup=OK"
 
 echo
-echo "===== 6. AUTO EXPIRY ====="
+echo "===== 7. AUTO EXPIRY ====="
 /usr/bin/korobka-support enable 3 > /tmp/korobka-support-expiry-enable.json || fail "short support enable"
 EXP_PORT="$(jq -r '.port' /tmp/korobka-support-expiry-enable.json)"
 echo "short-lived test port=$EXP_PORT"
@@ -119,7 +135,7 @@ rm -f /tmp/korobka-support-expiry-enable.json
 echo "support auto-expiry=OK"
 
 echo
-echo "===== 7. LUCI ASSETS / RPC ====="
+echo "===== 8. LUCI ASSETS / RPC ====="
 ubus -v list luci.korobka | grep -E 'support_enable|support_disable|support_qr' || fail "support RPC methods missing"
 CODE="$(curl -s -o /tmp/korobka-support.js -w '%{http_code}' http://127.0.0.1/luci-static/resources/view/korobka/support.js)"
 SIZE="$(wc -c < /tmp/korobka-support.js)"
@@ -129,7 +145,7 @@ jq -e 'has("admin/korobka/support")' /usr/share/luci/menu.d/luci-app-korobka.jso
 rm -f /tmp/korobka-support.js
 
 echo
-echo "===== 8. FINAL STATUS / NETWORK SAFETY ====="
+echo "===== 9. FINAL STATUS / NETWORK SAFETY ====="
 STATUS="$(ubus call luci.korobka status)" || fail "final status transport"
 echo "$STATUS" | jq '{local_management,support,wireguard,mtg,podkop}'
 echo "$STATUS" | jq -e '
