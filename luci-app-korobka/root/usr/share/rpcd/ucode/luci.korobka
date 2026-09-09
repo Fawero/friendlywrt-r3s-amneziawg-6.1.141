@@ -6,7 +6,7 @@ import { access, popen, readfile, error } from 'fs';
 import { cursor } from 'uci';
 
 function shellquote(s) {
-    return sprintf("'%s'", replace(`${s}`, "'", "'\\''"));
+    return `'${replace(`${s}`, "'", "'\\''")}'`;
 }
 
 function commandline(argv) {
@@ -15,7 +15,8 @@ function commandline(argv) {
     for (let i = 0; i < length(argv); i++)
         push(parts, shellquote(argv[i]));
 
-    return join(parts, ' ');
+    /* ucode join() signature is join(separator, array). */
+    return join(' ', parts);
 }
 
 function run_text(argv) {
