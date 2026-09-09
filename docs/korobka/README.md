@@ -1,17 +1,17 @@
 # Коробка — документация проекта
 
-Дата актуализации: **9 сентября 2026 года**. Редакция требований: **1.4**.
+Дата актуализации: **9 сентября 2026 года**. Редакция требований: **1.5**.
 
 Этот раздел — актуальная точка входа по тиражируемой Коробке на NanoPi R3S / R3S LTS. Последние проверенные решения и результаты испытаний имеют приоритет над ранними проектными предположениями.
 
-**Статус:** базовое сетевое runtime-ядро уже собрано и проверено на FriendlyElec NanoPi R3S LTS с FriendlyWrt 25.12.2 и фактическим ядром 6.1.141. Подтверждены AWG 3.1, netifd-owned provider tunnels, Podkop/sing-box, входящий стандартный WireGuard, MTG через отдельный SOCKS->WARP путь, reboot/autostart, диагностика внешнего доступа и live-добавление нескольких WG peers без перезапуска сети. LuCI-панель `luci-app-korobka` и first-boot wizard ещё не реализованы. Add/list путь менеджера WG peers проверен; remove-путь ещё должен пройти отдельную destructive/reboot-валидацию.
+**Статус:** базовое сетевое runtime-ядро уже собрано и проверено на FriendlyElec NanoPi R3S LTS с FriendlyWrt 25.12.2 и фактическим ядром 6.1.141. Подтверждены AWG 3.1, netifd-owned provider tunnels, Podkop/sing-box, входящий стандартный WireGuard, MTG через отдельный SOCKS->WARP путь, reboot/autostart, диагностика внешнего доступа и live-управление несколькими WG peers без перезапуска сети. `korobka-wg-peer` прошёл add/list/remove/re-add проверку, включая повторное использование освобождённого IP с новой криптографической парой. LuCI-панель `luci-app-korobka` и first-boot wizard ещё не реализованы.
 
 ## Документы
 
 | Документ | Содержание |
 |---|---|
 | [Runtime foundation 2026-09-09](RUNTIME-FOUNDATION-2026-09-09.md) | Фактически проверенная runtime-архитектура: WG, Podkop, MTG, reboot, NAT detection, endpoint/client generation и ограничения |
-| [WG peer manager validation 2026-09-09](WG-PEER-VALIDATION-2026-09-09.md) | Проверка add/list, автоматического адреса, live runtime update и отсутствия влияния на AWG/default route |
+| [WG peer manager validation 2026-09-09](WG-PEER-VALIDATION-2026-09-09.md) | Проверка add/list/remove/re-add, автоматического адреса, fresh key rotation, live runtime update и отсутствия влияния на AWG/default route |
 | [Требования и первый запуск](FIRST-BOOT.md) | Мастер, постоянный импорт конфигураций, назначения, белый IP, телефон и QR-коды |
 | [Архитектура](ARCHITECTURE.md) | AWG, Podkop, MTG, входящий WireGuard, управление и запуск без гонок |
 | [Podkop](PODKOP.md) | Установка, миграция старой политики и правила владения маршрутизацией |
@@ -33,7 +33,7 @@ Telegram client -> MTG :8888 -> 127.0.0.1:4534 -> awg_warp -> Telegram
 
 Входящий VPN телефона использует **стандартный WireGuard**, а не AmneziaWG. Серверный ключ и ключ каждого телефона генерируются заново на каждой коробке; ключи старого устройства не мигрируются. Доверенным WG-пирам разрешён доступ к LuCI/SSH самого роутера и к LAN — это отдельное осознанное решение. Будущая собственная панель `luci-app-korobka` остаётся локальным интерфейсом управления и не должна публиковаться напрямую в WAN.
 
-`korobka-wg-peer` уже умеет перечислять peers и добавлять новый peer с автоматическим выделением следующего свободного `10.77.0.x/32`, новой парой ключей, UCI persistence и live-обновлением `wg_clients` через `wg set`. На проверенном add-пути provider AWG interfaces и физический default route не изменились.
+`korobka-wg-peer` умеет перечислять peers, добавлять peer с явным или автоматическим именем, автоматически выделять следующий свободный `10.77.0.x/32`, генерировать новую пару ключей, сохранять UCI и live-обновлять `wg_clients` через `wg set`. Удаление peer убирает его из runtime, UCI, файловой системы и маршрутов. Освобождённый адрес может использоваться снова, но удалённые ключи не восстанавливаются: повторно созданный peer получает новую криптографическую идентичность.
 
 ## Внешний доступ
 
@@ -104,9 +104,9 @@ APK metadata kernel: 6.12.74
 
 ## Следующая точка продолжения
 
-1. Проверить `korobka-wg-peer remove` на disposable peer, затем reboot и убедиться, что удалённый peer не возвращается, а AWG/default route не меняются.
+1. Собрать `luci-app-korobka` поверх уже существующих CLI contracts: статус, Add device, Remove device, QR, Telegram proxy и внешний доступ.
 2. Сделать безопасное ownership/renewal для автоматических UPnP/NAT-PMP mappings перед включением `apply/remove` в production runtime.
-3. Собрать `luci-app-korobka` поверх уже существующих CLI contracts, включая Add device / Remove device / QR.
+3. Перед release image провести отдельный regression: удалить disposable peer, перезагрузить коробку и подтвердить, что удалённый и не пере-добавленный peer не возвращается.
 4. После этого оформить first-boot wizard и сборку воспроизводимого образа.
 
 ## Правило фиксации
