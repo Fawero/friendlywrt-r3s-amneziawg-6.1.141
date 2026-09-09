@@ -15,6 +15,7 @@
     "write": {
       "ubus": {
         "luci.korobka": [
+          "refresh_access",
           "add_peer",
           "remove_peer",
           "wg_qr",
