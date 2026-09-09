@@ -8,6 +8,10 @@ const callAdd = rpc.declare({ object: 'luci.korobka', method: 'add_peer', params
 const callRemove = rpc.declare({ object: 'luci.korobka', method: 'remove_peer', params: [ 'name' ] });
 const callQr = rpc.declare({ object: 'luci.korobka', method: 'wg_qr', params: [ 'name' ] });
 
+function css() {
+	return E('link', { 'rel': 'stylesheet', 'href': L.resource('korobka/korobka.css') });
+}
+
 function notifyError(message) {
 	ui.addNotification(null, E('p', {}, message || _('Неизвестная ошибка')), 'error');
 }
@@ -18,7 +22,7 @@ function showSvg(title, svg) {
 	ui.showModal(title, [
 		box,
 		E('div', {'class': 'right', 'style': 'margin-top:16px'}, [
-			E('button', {'class': 'btn cbi-button', 'click': ui.hideModal}, _('Закрыть'))
+			E('button', {'class': 'btn cbi-button korobka-btn', 'click': ui.hideModal}, _('Закрыть'))
 		])
 	]);
 }
@@ -28,9 +32,12 @@ function shortKey(k) {
 	return k.length > 18 ? k.substring(0, 10) + '…' + k.substring(k.length - 8) : k;
 }
 
+function statusBadge(ok) {
+	return E('span', {'class': 'korobka-badge ' + (ok ? 'korobka-badge-ok' : 'korobka-badge-warn')}, ok ? _('Активен') : _('Не в runtime'));
+}
+
 return view.extend({
 	load: function() {
-		/* status already contains peers; avoid a second RPC/process on page load */
 		return callStatus();
 	},
 
@@ -54,13 +61,13 @@ return view.extend({
 
 	handleRemove: function(name) {
 		ui.showModal(_('Удалить устройство?'), [
-			E('p', {}, _('Peer будет удалён из runtime WireGuard, UCI и локального хранилища ключей.')),
+			E('p', {}, _('Peer будет удалён из WireGuard runtime, UCI и локального хранилища ключей.')),
 			E('p', {}, [E('strong', {}, name)]),
 			E('div', {'class': 'right'}, [
-				E('button', {'class': 'btn', 'click': ui.hideModal}, _('Отмена')),
+				E('button', {'class': 'btn korobka-btn', 'click': ui.hideModal}, _('Отмена')),
 				' ',
 				E('button', {
-					'class': 'btn cbi-button cbi-button-negative',
+					'class': 'btn cbi-button korobka-btn korobka-btn-danger',
 					'click': function() {
 						ui.showModal(_('Удаление устройства'), [E('p', {'class': 'spinning'}, _('Удаляем peer…'))]);
 						callRemove(name).then(function(res) {
@@ -85,20 +92,23 @@ return view.extend({
 
 		if (!ready) {
 			ui.showModal(_('QR пока не готов'), [
-				E('p', {}, _('WireGuard peer уже создан, но внешний endpoint ещё не подтверждён.')),
-				E('p', {}, [
-					_('Причина: '), E('code', {}, endpoint && endpoint.reason || 'unknown'),
-					E('br'),
-					_('Candidate: '), E('code', {}, wgEndpoint.candidate_endpoint || '—')
+				E('div', {'class': 'korobka-callout korobka-callout-warn'}, [
+					E('div', {'class': 'korobka-callout-icon'}, '!'),
+					E('div', {}, [E('strong', {}, _('Устройство создано, но внешний endpoint не подтверждён.'))])
 				]),
-				E('p', {}, _('Настройте внешний доступ, после чего QR станет рабочим.')),
+				E('p', {}, [
+					_('Причина: '), E('code', {'class': 'korobka-code'}, endpoint && endpoint.reason || 'unknown'),
+					E('br'),
+					_('Candidate: '), E('code', {'class': 'korobka-code'}, wgEndpoint.candidate_endpoint || '—')
+				]),
+				E('p', {}, _('Настройте внешний доступ, после чего этот же peer получит рабочий QR без пересоздания ключей.')),
 				E('div', {'class': 'right'}, [
-					E('button', {'class': 'btn', 'click': ui.hideModal}, _('Закрыть')),
+					E('button', {'class': 'btn korobka-btn', 'click': ui.hideModal}, _('Закрыть')),
 					' ',
 					E('button', {
-						'class': 'btn cbi-button cbi-button-action',
+						'class': 'btn cbi-button korobka-btn korobka-btn-primary',
 						'click': function() { window.location.href = L.url('admin/korobka/access'); }
-					}, _('Внешний доступ'))
+					}, _('Настроить внешний доступ'))
 				])
 			]);
 			return;
@@ -124,73 +134,75 @@ return view.extend({
 		const endpoint = status.endpoint || {};
 		const ready = !!(endpoint.wireguard && endpoint.wireguard.ready);
 
-		const table = E('table', {'class': 'table'}, [
-			E('tr', {'class': 'tr table-titles'}, [
-				E('th', {'class': 'th'}, _('Устройство')),
-				E('th', {'class': 'th'}, _('Адрес')),
-				E('th', {'class': 'th'}, _('Public key')),
-				E('th', {'class': 'th'}, _('Runtime')),
-				E('th', {'class': 'th'}, _('Действия'))
-			])
-		]);
-
-		peers.forEach(function(p) {
-			const actions = E('div', {}, [
-				E('button', {
-					'class': 'btn cbi-button cbi-button-action',
-					'title': ready ? _('Показать QR') : _('Показать, что нужно для активации QR'),
-					'click': this.handleQr.bind(this, p.name, ready, endpoint)
-				}, ready ? _('QR') : _('QR / настройка')),
-				' ',
-				E('button', {
-					'class': 'btn cbi-button cbi-button-negative',
-					'click': this.handleRemove.bind(this, p.name)
-				}, _('Удалить'))
+		const rows = peers.map(function(p) {
+			return E('tr', {}, [
+				E('td', {}, [E('div', {'class': 'korobka-device-name'}, p.name), E('div', {'class': 'korobka-caption'}, _('WireGuard peer'))]),
+				E('td', {}, E('code', {'class': 'korobka-code'}, p.address || '—')),
+				E('td', {'title': p.public_key || ''}, E('code', {'class': 'korobka-code'}, shortKey(p.public_key))),
+				E('td', {}, statusBadge(!!p.runtime)),
+				E('td', {}, E('div', {'class': 'korobka-actions'}, [
+					E('button', {
+						'class': 'btn cbi-button korobka-btn korobka-btn-soft',
+						'click': this.handleQr.bind(this, p.name, ready, endpoint)
+					}, ready ? _('Показать QR') : _('QR / настройка')),
+					E('button', {
+						'class': 'btn cbi-button korobka-btn korobka-btn-danger',
+						'click': this.handleRemove.bind(this, p.name)
+					}, _('Удалить'))
+				]))
 			]);
-
-			table.appendChild(E('tr', {'class': 'tr'}, [
-				E('td', {'class': 'td'}, [E('strong', {}, p.name)]),
-				E('td', {'class': 'td'}, E('code', {}, p.address || '—')),
-				E('td', {'class': 'td', 'title': p.public_key || ''}, E('code', {}, shortKey(p.public_key))),
-				E('td', {'class': 'td'}, p.runtime ? _('Активен') : _('Нет в runtime')),
-				E('td', {'class': 'td'}, actions)
-			]));
 		}, this);
 
-		if (!peers.length)
-			table.appendChild(E('tr', {'class': 'tr'}, [E('td', {'class': 'td', 'colspan': 5}, _('Устройства ещё не добавлены'))]));
+		if (!rows.length)
+			rows.push(E('tr', {}, [E('td', {'colspan': 5}, _('Устройства ещё не добавлены'))]));
 
-		const nodes = [
-			E('h2', {}, _('Устройства WireGuard')),
-			E('p', {}, _('Каждое устройство получает собственную новую пару ключей и отдельный адрес 10.77.0.x/32.'))
-		];
-
-		if (!ready) {
-			nodes.push(E('div', {'class': 'cbi-section warning'}, [
-				E('strong', {}, _('Внешний endpoint ещё не готов. ')),
-				_('QR-кнопки доступны для объяснения следующего шага; рабочий QR будет выдан после настройки внешнего доступа.')
-			]));
-		}
-
-		nodes.push(E('div', {'class': 'cbi-section'}, [
-			E('h3', {}, _('Добавить устройство')),
-			E('div', {'style': 'display:flex;gap:8px;align-items:center;flex-wrap:wrap'}, [
-				E('input', {
-					'id': 'korobka-peer-name',
-					'class': 'cbi-input-text',
-					'placeholder': _('Имя, например iphone_sergey'),
-					'style': 'min-width:260px'
-				}),
-				E('button', {
-					'class': 'btn cbi-button cbi-button-add',
-					'click': this.handleAdd.bind(this)
-				}, _('Добавить'))
-			]),
-			E('p', {'class': 'description'}, _('Если имя оставить пустым, будет выбрано следующее свободное phoneN.'))
-		]));
-
-		nodes.push(E('div', {'class': 'cbi-section'}, [E('h3', {}, _('Список устройств')), table]));
-		return E('div', {}, nodes);
+		return E('div', {'class': 'korobka-page'}, [
+			css(),
+			E('div', {'class': 'korobka-shell'}, [
+				E('div', {'class': 'korobka-hero'}, [
+					E('div', {}, [
+						E('h2', {'class': 'korobka-title'}, _('Устройства WireGuard')),
+						E('div', {'class': 'korobka-subtitle'}, _('Каждое устройство получает собственную пару ключей и отдельный адрес. Удаление peer сразу отзывает его доступ.'))
+					]),
+					E('span', {'class': 'korobka-badge ' + (ready ? 'korobka-badge-ok' : 'korobka-badge-warn')}, ready ? _('QR готовы') : _('Нужен внешний доступ'))
+				]),
+				!ready ? E('div', {'class': 'korobka-callout korobka-callout-warn'}, [
+					E('div', {'class': 'korobka-callout-icon'}, '!'),
+					E('div', {}, [
+						E('strong', {}, _('QR пока не выдаётся как рабочий конфиг. ')),
+						_('Нажатие на «QR / настройка» покажет следующий шаг; сами peers уже созданы и сохраняются.')
+					])
+				]) : null,
+				E('div', {'class': 'korobka-card'}, [
+					E('div', {'class': 'korobka-card-head'}, [E('h3', {}, _('Добавить устройство')), E('span', {'class': 'korobka-caption'}, _('Адрес назначится автоматически'))]),
+					E('div', {'class': 'korobka-form-row'}, [
+						E('input', {
+							'id': 'korobka-peer-name',
+							'class': 'cbi-input-text korobka-input',
+							'placeholder': _('Например: iphone_sergey')
+						}),
+						E('button', {
+							'class': 'btn cbi-button korobka-btn korobka-btn-primary',
+							'click': this.handleAdd.bind(this)
+						}, _('Добавить устройство'))
+					]),
+					E('div', {'class': 'korobka-caption', 'style': 'margin-top:8px'}, _('Если имя оставить пустым, будет выбрано следующее свободное phoneN.'))
+				]),
+				E('h3', {'class': 'korobka-section-title'}, _('Подключённые устройства')),
+				E('div', {'class': 'korobka-table-wrap'}, [
+					E('table', {'class': 'table korobka-table'}, [
+						E('thead', {}, E('tr', {}, [
+							E('th', {}, _('Устройство')),
+							E('th', {}, _('Адрес')),
+							E('th', {}, _('Public key')),
+							E('th', {}, _('Состояние')),
+							E('th', {}, _('Действия'))
+						])),
+						E('tbody', {}, rows)
+					])
+				])
+			])
+		]);
 	},
 
 	handleSave: null,
