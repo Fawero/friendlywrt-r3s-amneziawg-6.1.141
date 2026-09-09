@@ -13,6 +13,12 @@ fail() {
 # Install the full current runtime/UI first. This does not change LAN addressing.
 /bin/sh "$ROOT/scripts/install-luci-app-korobka-dev.sh"
 
+# Development upgrades must never inherit an orphaned support Dropbear from a
+# previously interrupted validation. The freshly installed manager performs a
+# synchronous listener/firewall/secret cleanup.
+/usr/bin/korobka-support disable >/dev/null 2>&1 \
+    || fail "unable to clean previous support session"
+
 STATUS="$(/usr/bin/korobka-local-management status)" || fail "local management status failed"
 echo "===== LOCAL MANAGEMENT BEFORE ====="
 echo "$STATUS" | jq .
