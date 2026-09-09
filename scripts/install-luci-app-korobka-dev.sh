@@ -32,12 +32,17 @@ rpc_must_succeed() {
 for f in \
     "$RUNTIME/korobka-public-access" \
     "$RUNTIME/korobka-endpoint" \
-    "$RUNTIME/korobka-ui-status"; do
+    "$RUNTIME/korobka-ui-status" \
+    "$RUNTIME/korobka-local-management" \
+    "$RUNTIME/korobka-support"; do
     [ -f "$f" ] || fail "runtime source missing: $f"
     sh -n "$f" || fail "runtime source syntax error: $f"
 done
 
-for cmd in jq qrencode ucode ubus curl timeout; do
+[ -f "$ROOT/rootfs/usr/local/sbin/korobka-support-run" ] || fail "support runner missing"
+[ -f "$ROOT/rootfs/etc/init.d/korobka-support" ] || fail "support init script missing"
+
+for cmd in jq qrencode ucode ubus curl timeout ssh-keygen od; do
     command -v "$cmd" >/dev/null 2>&1 || fail "required command missing: $cmd"
 done
 
@@ -47,6 +52,9 @@ for cmd in \
     /usr/bin/korobka-mtg-access; do
     [ -x "$cmd" ] || fail "validated Korobka runtime command missing: $cmd"
 done
+
+/usr/sbin/dropbear -h 2>&1 | grep -q -- '-D' \
+    || fail "Dropbear lacks isolated authorized_keys directory support (-D)"
 
 if ! ucode -e 'print(join(" ", ["korobka", "ucode", "join", "ok"]), "\n");' 2>/dev/null \
     | grep -q '^korobka ucode join ok$'; then
@@ -68,12 +76,14 @@ mkdir -p \
     /www/luci-static/resources/korobka \
     /usr/share/luci/menu.d \
     /usr/share/rpcd/acl.d \
-    /usr/share/rpcd/ucode
+    /usr/share/rpcd/ucode \
+    /usr/local/sbin
 
 cp -f "$APP/htdocs/luci-static/resources/view/korobka/overview.js" /www/luci-static/resources/view/korobka/overview.js
 cp -f "$APP/htdocs/luci-static/resources/view/korobka/devices.js" /www/luci-static/resources/view/korobka/devices.js
 cp -f "$APP/htdocs/luci-static/resources/view/korobka/telegram.js" /www/luci-static/resources/view/korobka/telegram.js
 cp -f "$APP/htdocs/luci-static/resources/view/korobka/access.js" /www/luci-static/resources/view/korobka/access.js
+cp -f "$APP/htdocs/luci-static/resources/view/korobka/support.js" /www/luci-static/resources/view/korobka/support.js
 cp -f "$APP/htdocs/luci-static/resources/korobka/korobka.css" /www/luci-static/resources/korobka/korobka.css
 
 cp -f "$APP/root/usr/share/luci/menu.d/luci-app-korobka.json" /usr/share/luci/menu.d/luci-app-korobka.json
@@ -83,6 +93,10 @@ cp -f "$APP/root/usr/share/rpcd/ucode/luci.korobka" /usr/share/rpcd/ucode/luci.k
 cp -f "$RUNTIME/korobka-public-access" /usr/bin/korobka-public-access
 cp -f "$RUNTIME/korobka-endpoint" /usr/bin/korobka-endpoint
 cp -f "$RUNTIME/korobka-ui-status" /usr/bin/korobka-ui-status
+cp -f "$RUNTIME/korobka-local-management" /usr/bin/korobka-local-management
+cp -f "$RUNTIME/korobka-support" /usr/bin/korobka-support
+cp -f "$ROOT/rootfs/usr/local/sbin/korobka-support-run" /usr/local/sbin/korobka-support-run
+cp -f "$ROOT/rootfs/etc/init.d/korobka-support" /etc/init.d/korobka-support
 
 chmod 0644 \
     /www/luci-static/resources/view/korobka/*.js \
@@ -93,14 +107,24 @@ chmod 0755 \
     /usr/share/rpcd/ucode/luci.korobka \
     /usr/bin/korobka-public-access \
     /usr/bin/korobka-endpoint \
-    /usr/bin/korobka-ui-status
+    /usr/bin/korobka-ui-status \
+    /usr/bin/korobka-local-management \
+    /usr/bin/korobka-support \
+    /usr/local/sbin/korobka-support-run \
+    /etc/init.d/korobka-support
 
-sh -n /usr/bin/korobka-public-access || fail "korobka-public-access syntax error"
-sh -n /usr/bin/korobka-endpoint || fail "korobka-endpoint syntax error"
-sh -n /usr/bin/korobka-ui-status || fail "korobka-ui-status syntax error"
+for f in \
+    /usr/bin/korobka-public-access \
+    /usr/bin/korobka-endpoint \
+    /usr/bin/korobka-ui-status \
+    /usr/bin/korobka-local-management \
+    /usr/bin/korobka-support \
+    /usr/local/sbin/korobka-support-run; do
+    sh -n "$f" || fail "installed script syntax error: $f"
+done
 
-# One foreground probe seeds the cache during installation. Normal LuCI page loads
-# use cached/local state and never wait for Internet/UPnP/NAT-PMP probes.
+/etc/init.d/korobka-support enable
+
 /usr/bin/korobka-public-access refresh | jq -e . >/dev/null \
     || fail "initial public access refresh failed"
 /usr/bin/korobka-ui-status | jq -e . >/dev/null \
