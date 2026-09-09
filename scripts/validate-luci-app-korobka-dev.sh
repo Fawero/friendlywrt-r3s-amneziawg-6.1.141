@@ -182,7 +182,7 @@ echo "$FORWARD" | jq -e '.confirmed == false' >/dev/null || fail "manual forward
 echo "manual forward remains disabled=OK"
 
 echo
-echo "===== 11. STATIC LUCI VIEWS ====="
+echo "===== 11. STATIC LUCI ASSETS ====="
 for VIEW in overview devices telegram access; do
     OUT="/tmp/korobka-${VIEW}.js"
     CODE="$(curl -s -o "$OUT" -w '%{http_code}' \
@@ -192,7 +192,16 @@ for VIEW in overview devices telegram access; do
     [ "$CODE" = "200" ] || fail "$VIEW HTTP=$CODE"
     [ "$SIZE" -gt 500 ] || fail "$VIEW unexpectedly small"
 done
-echo "static LuCI views=OK"
+
+CSS_OUT="/tmp/korobka.css"
+CSS_CODE="$(curl -s -o "$CSS_OUT" -w '%{http_code}' \
+    "http://127.0.0.1/luci-static/resources/korobka/korobka.css")"
+CSS_SIZE="$(wc -c < "$CSS_OUT")"
+printf '%-12s HTTP=%s bytes=%s\n' "css" "$CSS_CODE" "$CSS_SIZE"
+[ "$CSS_CODE" = "200" ] || fail "Korobka CSS HTTP=$CSS_CODE"
+[ "$CSS_SIZE" -gt 1000 ] || fail "Korobka CSS unexpectedly small"
+grep -q 'korobka-shell' "$CSS_OUT" || fail "Korobka CSS marker missing"
+echo "static LuCI assets=OK"
 
 echo
 echo "===== 12. MENU + ACL ====="
@@ -216,5 +225,5 @@ logread | grep -iE 'rpcd|ucode|korobka|luci' | tail -120 || true
 
 echo
 echo "=================================================="
-echo " KOROBKA LUCI: PERFORMANCE + BACKEND VALIDATION SUCCESS"
+echo " KOROBKA LUCI: PERFORMANCE + UI ASSET VALIDATION SUCCESS"
 echo "=================================================="
