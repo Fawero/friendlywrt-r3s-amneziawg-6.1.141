@@ -46,29 +46,43 @@ case "$HTTP_CODE" in 200|301|302|403) ;; *) fail "local LuCI HTTPS unreachable" 
 
 echo
 echo "===== 2. SUPPORT DEFAULT ====="
-/usr/bin/korobka-support disable >/dev/null 2>&1 || true
+/usr/bin/korobka-support disable >/dev/null 2>&1 || fail "initial support cleanup"
 SUPPORT="$(/usr/bin/korobka-support status)" || fail "support default status"
 echo "$SUPPORT" | jq .
 echo "$SUPPORT" | jq -e '.enabled == false' >/dev/null || fail "support default disabled"
 uci -q get firewall.korobka_support >/dev/null 2>&1 && fail "support firewall exists while disabled" || true
 
 echo
-echo "===== 3. DIRECT CLI JSON CONTRACT ====="
+echo "===== 3. DIRECT CLI JSON / PERFORMANCE CONTRACT ====="
+START="$(date +%s)"
 CLI_ENABLE="$(/usr/bin/korobka-support enable 10)" || fail "direct support enable"
+END="$(date +%s)"
+CLI_ELAPSED=$((END - START))
 printf '%s\n' "$CLI_ENABLE" | jq .
 printf '%s\n' "$CLI_ENABLE" | jq -e '
     type == "object" and
     .enabled == true and
     (.port >= 30000) and
     (.port < 60000) and
-    .listener == true
-' >/dev/null || fail "support CLI stdout is not clean JSON"
+    (.seconds_left >= 6) and
+    .listener == true and
+    .bundle_ready == true
+' >/dev/null || fail "support CLI stdout/performance contract"
+[ "$CLI_ELAPSED" -le 4 ] || fail "support enable too slow: ${CLI_ELAPSED}s"
 CLI_PORT="$(printf '%s\n' "$CLI_ENABLE" | jq -r '.port')"
-echo "direct CLI JSON=OK port=$CLI_PORT"
-/usr/bin/korobka-support disable >/dev/null || fail "direct support disable"
+echo "direct CLI JSON=OK port=$CLI_PORT elapsed=${CLI_ELAPSED}s"
 
-sleep 1
+START="$(date +%s)"
+CLI_DISABLE="$(/usr/bin/korobka-support disable)" || fail "direct support disable"
+END="$(date +%s)"
+DISABLE_ELAPSED=$((END - START))
+echo "$CLI_DISABLE" | jq .
+echo "$CLI_DISABLE" | jq -e '.ok == true and .enabled == false' >/dev/null || fail "direct disable JSON"
+[ "$DISABLE_ELAPSED" -le 6 ] || fail "support disable too slow: ${DISABLE_ELAPSED}s"
 netstat -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${CLI_PORT}$" && fail "direct CLI listener remains after disable" || true
+uci -q get firewall.korobka_support >/dev/null 2>&1 && fail "direct CLI firewall remains after disable" || true
+[ ! -e /etc/korobka/support ] || fail "direct CLI secrets remain after disable"
+echo "direct synchronous disable=OK elapsed=${DISABLE_ELAPSED}s"
 
 echo
 echo "===== 4. SUPPORT RPC ENABLE ====="
@@ -78,7 +92,7 @@ echo "$ENABLE" | jq -e '
     .enabled == true and
     (.port >= 30000) and
     (.port < 60000) and
-    (.seconds_left > 86000) and
+    (.seconds_left > 86390) and
     .listener == true and
     .bundle_ready == true
 ' >/dev/null || fail "support enable contract"
@@ -112,12 +126,10 @@ echo "===== 6. SUPPORT RPC DISABLE ====="
 DISABLE="$(ubus call luci.korobka support_disable)" || fail "support_disable transport"
 echo "$DISABLE" | jq .
 echo "$DISABLE" | jq -e '.enabled == false and .ok == true' >/dev/null || fail "support disable response"
-
-sleep 1
-netstat -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${PORT}$" && fail "support listener remains after disable" || true
+netstat -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${PORT}$" && fail "support listener remains after RPC disable" || true
 uci -q get firewall.korobka_support >/dev/null 2>&1 && fail "support firewall remains after disable" || true
 [ ! -e /etc/korobka/support ] || fail "support secret directory remains after disable"
-echo "support disable cleanup=OK"
+echo "support RPC disable cleanup=OK"
 
 echo
 echo "===== 7. AUTO EXPIRY ====="
