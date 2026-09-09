@@ -1,0 +1,291 @@
+#!/bin/sh
+
+ACTION="${1:-list}"
+NAME="${2:-}"
+
+BASE="/etc/korobka/wireguard/peers"
+IFACE="wg_clients"
+NET="10.77.0"
+
+fail() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+is_peer_section() {
+    [ "$(uci -q get "network.$1" 2>/dev/null)" = "wireguard_wg_clients" ]
+}
+
+next_name() {
+    n=1
+    while :; do
+        candidate="phone$n"
+        if ! is_peer_section "$candidate" && [ ! -e "$BASE/$candidate" ]; then
+            echo "$candidate"
+            return 0
+        fi
+        n=$((n + 1))
+    done
+}
+
+next_ip() {
+    host=2
+
+    while [ "$host" -le 254 ]; do
+        addr="$NET.$host/32"
+        used=0
+
+        for section in $(
+            uci show network 2>/dev/null |
+            sed -n 's/^network\.\([^=]*\)=wireguard_wg_clients$/\1/p'
+        ); do
+            current="$(
+                uci -q get "network.$section.allowed_ips" 2>/dev/null |
+                awk '{print $1}'
+            )"
+
+            if [ "$current" = "$addr" ]; then
+                used=1
+                break
+            fi
+        done
+
+        if [ "$used" -eq 0 ]; then
+            echo "$addr"
+            return 0
+        fi
+
+        host=$((host + 1))
+    done
+
+    return 1
+}
+
+validate_name() {
+    case "$1" in
+        "") return 1 ;;
+        *[!A-Za-z0-9_]*) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
+list_peers() {
+    TMP="/tmp/korobka-wg-peers-$$.jsonl"
+    : > "$TMP"
+
+    for section in $(
+        uci show network 2>/dev/null |
+        sed -n 's/^network\.\([^=]*\)=wireguard_wg_clients$/\1/p'
+    ); do
+        pub="$(uci -q get "network.$section.public_key" 2>/dev/null || true)"
+        addr="$(
+            uci -q get "network.$section.allowed_ips" 2>/dev/null |
+            awk '{print $1}'
+        )"
+
+        handshake=0
+        rx=0
+        tx=0
+        runtime=false
+
+        if [ -n "$pub" ] && wg show "$IFACE" >/dev/null 2>&1; then
+            if wg show "$IFACE" peers 2>/dev/null | grep -Fxq "$pub"; then
+                runtime=true
+
+                handshake="$(
+                    wg show "$IFACE" latest-handshakes 2>/dev/null |
+                    awk -v key="$pub" '$1 == key {print $2; exit}'
+                )"
+
+                set -- $(
+                    wg show "$IFACE" transfer 2>/dev/null |
+                    awk -v key="$pub" '$1 == key {print $2, $3; exit}'
+                )
+
+                rx="${1:-0}"
+                tx="${2:-0}"
+            fi
+        fi
+
+        [ -n "$handshake" ] || handshake=0
+
+        jq -n \
+            --arg name "$section" \
+            --arg address "$addr" \
+            --arg public_key "$pub" \
+            --argjson runtime "$runtime" \
+            --argjson latest_handshake "$handshake" \
+            --argjson rx_bytes "$rx" \
+            --argjson tx_bytes "$tx" \
+        '{
+            name: $name,
+            address: $address,
+            public_key: $public_key,
+            runtime: $runtime,
+            latest_handshake: $latest_handshake,
+            rx_bytes: $rx_bytes,
+            tx_bytes: $tx_bytes
+        }' >> "$TMP"
+    done
+
+    jq -s '.' "$TMP"
+    rm -f "$TMP"
+}
+
+add_peer() {
+    command -v wg >/dev/null 2>&1 || fail "wg command missing"
+    wg show "$IFACE" >/dev/null 2>&1 || fail "$IFACE is not running"
+
+    if [ -z "$NAME" ]; then
+        NAME="$(next_name)"
+    fi
+
+    validate_name "$NAME" || fail "invalid peer name: $NAME"
+    is_peer_section "$NAME" && fail "peer already exists: $NAME"
+    [ -e "$BASE/$NAME" ] && fail "peer directory already exists: $NAME"
+
+    ADDR="$(next_ip)" || fail "no free addresses in 10.77.0.0/24"
+
+    DIR="$BASE/$NAME"
+    BACKUP="/tmp/network-before-wg-peer-$$"
+
+    cp /etc/config/network "$BACKUP" || fail "cannot backup network config"
+
+    mkdir -p "$DIR" || fail "cannot create peer directory"
+    chmod 700 "$BASE" "$DIR" 2>/dev/null || true
+
+    umask 077
+
+    if ! wg genkey > "$DIR/private.key"; then
+        rm -rf "$DIR" "$BACKUP"
+        fail "key generation failed"
+    fi
+
+    if ! wg pubkey < "$DIR/private.key" > "$DIR/public.key"; then
+        rm -rf "$DIR" "$BACKUP"
+        fail "public key generation failed"
+    fi
+
+    chmod 600 "$DIR/private.key" "$DIR/public.key"
+
+    PUB="$(cat "$DIR/public.key")"
+
+    uci set "network.$NAME=wireguard_$IFACE" || {
+        rm -rf "$DIR"
+        cp "$BACKUP" /etc/config/network
+        rm -f "$BACKUP"
+        fail "cannot create UCI peer"
+    }
+
+    uci set "network.$NAME.description=$NAME"
+    uci set "network.$NAME.public_key=$PUB"
+    uci add_list "network.$NAME.allowed_ips=$ADDR"
+    uci set "network.$NAME.route_allowed_ips=1"
+    uci set "network.$NAME.persistent_keepalive=25"
+
+    if ! uci commit network; then
+        cp "$BACKUP" /etc/config/network
+        rm -rf "$DIR"
+        rm -f "$BACKUP"
+        fail "UCI commit failed"
+    fi
+
+    if ! wg set "$IFACE" \
+        peer "$PUB" \
+        allowed-ips "$ADDR" \
+        persistent-keepalive 25
+    then
+        cp "$BACKUP" /etc/config/network
+        uci commit network
+        rm -rf "$DIR"
+        rm -f "$BACKUP"
+        fail "runtime peer update failed; UCI rolled back"
+    fi
+
+    ip route replace "$ADDR" dev "$IFACE" 2>/dev/null || true
+
+    if ! wg show "$IFACE" peers | grep -Fxq "$PUB"; then
+        wg set "$IFACE" peer "$PUB" remove 2>/dev/null || true
+        ip route del "$ADDR" dev "$IFACE" 2>/dev/null || true
+
+        cp "$BACKUP" /etc/config/network
+        uci commit network
+
+        rm -rf "$DIR"
+        rm -f "$BACKUP"
+
+        fail "runtime verification failed; rolled back"
+    fi
+
+    rm -f "$BACKUP"
+
+    jq -n \
+        --arg name "$NAME" \
+        --arg address "$ADDR" \
+        --arg public_key "$PUB" \
+    '{
+        ok: true,
+        action: "added",
+        name: $name,
+        address: $address,
+        public_key: $public_key
+    }'
+}
+
+remove_peer() {
+    [ -n "$NAME" ] || fail "peer name required"
+    validate_name "$NAME" || fail "invalid peer name: $NAME"
+    is_peer_section "$NAME" || fail "peer does not exist: $NAME"
+
+    PUB="$(uci -q get "network.$NAME.public_key" 2>/dev/null || true)"
+    ADDR="$(
+        uci -q get "network.$NAME.allowed_ips" 2>/dev/null |
+        awk '{print $1}'
+    )"
+
+    [ -n "$PUB" ] || fail "peer public key missing"
+
+    BACKUP="/tmp/network-before-wg-peer-remove-$$"
+    cp /etc/config/network "$BACKUP" || fail "cannot backup network config"
+
+    if wg show "$IFACE" peers 2>/dev/null | grep -Fxq "$PUB"; then
+        wg set "$IFACE" peer "$PUB" remove || {
+            rm -f "$BACKUP"
+            fail "cannot remove runtime peer"
+        }
+    fi
+
+    ip route del "$ADDR" dev "$IFACE" 2>/dev/null || true
+
+    uci -q delete "network.$NAME"
+
+    if ! uci commit network; then
+        cp "$BACKUP" /etc/config/network
+        uci commit network
+        rm -f "$BACKUP"
+        fail "UCI commit failed"
+    fi
+
+    rm -rf "$BASE/$NAME"
+    rm -f "$BACKUP"
+
+    jq -n \
+        --arg name "$NAME" \
+        --arg address "$ADDR" \
+    '{
+        ok: true,
+        action: "removed",
+        name: $name,
+        address: $address
+    }'
+}
+
+case "$ACTION" in
+    list) list_peers ;;
+    add) add_peer ;;
+    remove) remove_peer ;;
+    *)
+        echo "Usage: $0 {list|add [name]|remove name}" >&2
+        exit 2
+        ;;
+esac
