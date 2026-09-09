@@ -1,12 +1,12 @@
 # Коробка — документация проекта
 
-Дата актуализации: **9 сентября 2026 года**. Редакция требований: **1.7**.
+Дата актуализации: **9 сентября 2026 года**. Редакция требований: **1.8**.
 
 Этот раздел — актуальная точка входа по тиражируемой Коробке на NanoPi R3S / R3S LTS. Последние проверенные решения и результаты испытаний имеют приоритет над ранними проектными предположениями.
 
 **Статус:** базовое сетевое runtime-ядро собрано и проверено на FriendlyElec NanoPi R3S LTS с FriendlyWrt 25.12.2 и фактическим ядром 6.1.141. Подтверждены AWG 3.1, netifd-owned provider tunnels, Podkop/sing-box, входящий стандартный WireGuard, MTG через отдельный SOCKS->WARP путь, reboot/autostart, диагностика внешнего доступа, live-управление несколькими WG peers без перезапуска сети и backend LuCI-панели `luci-app-korobka`.
 
-LuCI backend прошёл полный live smoke-test, а performance-блок V5 подтвердил: cached status открывается примерно за 1 секунду, глубокая network-диагностика вынесена в отдельный refresh и занимает около 6 секунд, при этом default route, AWG, WireGuard, Podkop и MTG не меняются. В `main` подготовлен V6 visual candidate с общей дизайн-системой для Overview / Devices / Telegram / External Access; он требует отдельной browser/UI validation. First-boot wizard ещё не реализован.
+LuCI backend прошёл полный live smoke-test, performance-блок V5 подтвердил cached status около 1 секунды, а отдельный support/local-management milestone прошёл полный live lifecycle. Проверены transit LAN `192.168.77.1/24`, `korobka.home.arpa`, DHCP/DNS для WAN домашнего роутера, отдельный временный key-only Dropbear на случайном WAN-порту, QR support bundle, ручное отключение, 24h TTL-модель, короткий auto-expiry и полная очистка listener/firewall/ключей. V6 visual candidate остаётся на browser/UI validation. First-boot wizard ещё не реализован.
 
 ## Документы
 
@@ -15,6 +15,8 @@ LuCI backend прошёл полный live smoke-test, а performance-блок 
 | [Runtime foundation 2026-09-09](RUNTIME-FOUNDATION-2026-09-09.md) | Фактически проверенная runtime-архитектура: WG, Podkop, MTG, reboot, NAT detection, endpoint/client generation и ограничения |
 | [WG peer manager validation 2026-09-09](WG-PEER-VALIDATION-2026-09-09.md) | Проверка add/list/remove/re-add, автоматического адреса, fresh key rotation, live runtime update и отсутствия влияния на AWG/default route |
 | [LuCI backend validation 2026-09-09](LUCI-VALIDATION-2026-09-09.md) | Проверка rpcd/ucode backend, status/peers contracts, add/remove RPC lifecycle, QR gates, menu/ACL и network safety |
+| [Support + local validation 2026-09-09](SUPPORT-LOCAL-VALIDATION-2026-09-09.md) | Проверка `192.168.77.1`, `korobka.home.arpa`, временного support SSH, QR, disable/expiry cleanup и network safety |
+| [Support and discovery](SUPPORT-AND-DISCOVERY.md) | Продуктовая топология Провайдер -> Коробка -> домашний роутер, локальное управление и временный сервисный доступ |
 | [Требования и первый запуск](FIRST-BOOT.md) | Мастер, постоянный импорт конфигураций, назначения, белый IP, телефон и QR-коды |
 | [Архитектура](ARCHITECTURE.md) | AWG, Podkop, MTG, входящий WireGuard, управление и запуск без гонок |
 | [Podkop](PODKOP.md) | Установка, миграция старой политики и правила владения маршрутизацией |
@@ -27,6 +29,7 @@ LuCI backend прошёл полный live smoke-test, а performance-блок 
 Один воспроизводимый образ microSD с ПО, шаблонами и проверенным пресетом. После локальной активации каждый экземпляр получает собственные ключи, секреты и загруженные владельцем provider-конфигурации. Персонализированную рабочую карту не используем как общий образ для других владельцев.
 
 ```text
+Провайдер -> Коробка -> домашний роутер -> домашние устройства
 Домашние устройства -> Podkop -> выбранный исходящий AWG -> интернет
 Телефон -> входящий wg_clients -> Podkop -> policy routing / домашняя сеть / интернет
 Telegram client -> MTG :8888 -> 127.0.0.1:4534 -> awg_warp -> Telegram
@@ -38,18 +41,71 @@ Telegram client -> MTG :8888 -> 127.0.0.1:4534 -> awg_warp -> Telegram
 
 `korobka-wg-peer` умеет перечислять peers, добавлять peer с явным или автоматическим именем, автоматически выделять следующий свободный `10.77.0.x/32`, генерировать новую пару ключей, сохранять UCI и live-обновлять `wg_clients` через `wg set`. Удаление peer убирает его из runtime, UCI, файловой системы и маршрутов. Освобождённый адрес может использоваться снова, но удалённые ключи не восстанавливаются: повторно созданный peer получает новую криптографическую идентичность.
 
+## Локальное управление
+
+Базовая transit-сеть между Коробкой и WAN домашнего роутера:
+
+```text
+Коробка LAN: 192.168.77.1/24
+Домашний роутер WAN: DHCP из 192.168.77.0/24
+Gateway: 192.168.77.1
+DNS: 192.168.77.1
+```
+
+Коробка публикует локальную DNS-запись:
+
+```text
+korobka.home.arpa -> 192.168.77.1
+```
+
+Основной адрес управления:
+
+```text
+https://korobka.home.arpa/
+```
+
+Fallback:
+
+```text
+https://192.168.77.1/
+```
+
+Live validation подтвердила DNS-разрешение и ответ LuCI по HTTPS на transit IP. Конкретная transit-подсеть должна проверяться на конфликт при first boot; `192.168.77.0/24` — product default, а не безусловно свободная сеть для любой инсталляции.
+
+## Временная техподдержка
+
+`korobka-support` реализует отдельную support-сессию, не меняя основной Dropbear/SSH пользователя.
+
+Проверенная модель:
+
+- support выключен по умолчанию;
+- случайный TCP-порт `30000-59999` на каждую сессию;
+- новая Ed25519 key pair на каждую сессию;
+- отдельный Dropbear `authorized_keys` directory;
+- password auth support-listener отключён;
+- port forwarding support-listener отключён;
+- временный WAN firewall rule только для выбранного порта;
+- максимальный TTL 24 часа;
+- QR support bundle для передачи техподдержке;
+- `disable` синхронно удаляет listener/firewall/ключи;
+- auto-expiry удаляет их автоматически;
+- validator имеет fail-safe cleanup и не оставляет тестовые support-сессии после ошибки.
+
+На текущем стенде WAN Коробки находится за дополнительным upstream NAT, поэтому `reachable=false` корректен. В боевой схеме с direct public WAN временный support-порт доступен непосредственно на Коробке; при provider CGNAT нужен будущий reverse support relay.
+
 ## LuCI-панель
 
 `luci-app-korobka` реализован на современном LuCI JS/RPC стеке без legacy Lua-controller и без generic shell-exec из браузера.
 
-Проверенные страницы:
+Страницы:
 
 ```text
 Коробка
 ├── Обзор
 ├── Устройства
 ├── Telegram
-└── Внешний доступ
+├── Внешний доступ
+└── Техподдержка
 ```
 
 Backend RPC object:
@@ -68,6 +124,9 @@ add_peer
 remove_peer
 wg_qr
 mtg_qr
+support_enable
+support_disable
+support_qr
 set_manual_forward
 ```
 
@@ -80,7 +139,7 @@ Performance architecture панели:
 - backend QR gate остаётся строгим: рабочие секретные конфиги выдаются только при `endpoint.ready=true`;
 - UI-кнопки QR остаются кликабельными и при неготовом endpoint объясняют следующий шаг вместо немой disabled-кнопки.
 
-V5 live validation показал cached status около 1 секунды и explicit network refresh около 6 секунд на текущем стенде. V6 visual candidate добавляет общий CSS, единые карточки, badges, callouts, responsive layout и переработанные экраны Overview / Devices / Telegram / External Access. До browser validation V6 считается candidate, а не validated UI.
+V5 live validation показал cached status около 1 секунды и explicit network refresh около 6 секунд на текущем стенде. V6 visual candidate добавляет общий CSS, единые карточки, badges, callouts, responsive layout и переработанные экраны Overview / Devices / Telegram / External Access / Support. До browser validation V6 считается candidate, а не validated UI.
 
 ## Внешний доступ
 
@@ -109,7 +168,7 @@ TCP 8888  -> MTG
 WAN -> AWG interfaces -> Podkop/sing-box -> SOCKS ready -> MTG
 ```
 
-Старые hotplug-скрипты, ручные stop/start гонки и временная подмена DNS не мигрируются.
+Support-service включён в автозапуск, но без активной support-сессии ничего не слушает. Для активной сессии reboot/expiry regression ещё нужно провести отдельно перед release image.
 
 ## Runtime-файлы в репозитории
 
@@ -118,16 +177,20 @@ WAN -> AWG interfaces -> Podkop/sing-box -> SOCKS ready -> MTG
 ```text
 /etc/config/korobka
 /etc/init.d/mtg
+/etc/init.d/korobka-support
 /usr/bin/korobka-public-access
 /usr/bin/korobka-endpoint
 /usr/bin/korobka-wg-client
 /usr/bin/korobka-wg-peer
 /usr/bin/korobka-mtg-access
 /usr/bin/korobka-ui-status
+/usr/bin/korobka-local-management
+/usr/bin/korobka-support
 /usr/local/sbin/korobka-mtg-run
+/usr/local/sbin/korobka-support-run
 ```
 
-В `luci-app-korobka/` сохранены menu JSON, ACL JSON, rpcd ucode backend, четыре LuCI JS views и общий visual stylesheet `korobka.css`.
+В `luci-app-korobka/` сохранены menu JSON, ACL JSON, rpcd ucode backend, LuCI JS views и общий visual stylesheet `korobka.css`.
 
 В `scripts/` сохранены воспроизводимые helpers и validators, включая:
 
@@ -136,7 +199,10 @@ WAN -> AWG interfaces -> Podkop/sing-box -> SOCKS ready -> MTG
 - создание нового incoming WireGuard server + первого peer;
 - конфигурацию MTG через отдельный Podkop SOCKS -> `awg_warp`;
 - development installer LuCI-панели;
-- полный backend/performance/UI-asset validator LuCI-панели.
+- backend/performance/UI-asset validator LuCI-панели;
+- read-only preflight support/local-management;
+- installer support/local-management;
+- полный support/local lifecycle validator.
 
 ## Критическое ограничение FriendlyWrt
 
@@ -156,11 +222,12 @@ APK metadata kernel: 6.12.74
 
 ## Следующая точка продолжения
 
-1. Установить V6 visual candidate, пройти backend/performance/UI-asset validator и провести browser validation четырёх страниц.
-2. Сделать безопасное ownership/renewal для автоматических UPnP/NAT-PMP mappings перед включением `apply/remove` в production runtime.
-3. Перед release image провести отдельный regression: удалить disposable peer, перезагрузить коробку и подтвердить, что удалённый и не пере-добавленный peer не возвращается.
-4. После этого оформить first-boot wizard и сборку воспроизводимого образа.
+1. Провести browser/UI validation V6, включая новую страницу `Техподдержка` и QR UX.
+2. Подключить реальный домашний роутер WAN-портом к LAN Коробки и проверить DHCP/DNS/доступ к `korobka.home.arpa` уже с устройства за его NAT/Wi-Fi.
+3. Перед release image провести reboot regression активной support-сессии и regression удаления disposable WG peer.
+4. Сделать reverse support relay для provider CGNAT и безопасное ownership/renewal для UPnP/NAT-PMP mappings.
+5. После этого оформить first-boot wizard и сборку воспроизводимого образа.
 
 ## Правило фиксации
 
-После каждого проверенного блока обновлять runtime-файлы и документацию в GitHub сразу. Не коммитить provider PrivateKeys, WG private keys, MTG secret, generated client configs, access links с secret, пароли, токены, персональные hostname/IP и необезличенные резервные копии.
+После каждого проверенного блока обновлять runtime-файлы и документацию в GitHub сразу. Не коммитить provider PrivateKeys, WG private keys, MTG secret, generated client configs, support private keys/bundles, access links с secret, пароли, токены, персональные hostname/IP и необезличенные резервные копии.
