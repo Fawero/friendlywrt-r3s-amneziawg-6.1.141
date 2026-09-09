@@ -9,6 +9,21 @@ fail() {
     exit 1
 }
 
+rpc_must_succeed() {
+    METHOD="$1"
+    shift
+
+    OUT="$(ubus call luci.korobka "$METHOD" "$@")" || fail "RPC $METHOD transport failed"
+    echo "$OUT" | jq .
+
+    echo "$OUT" | jq -e '
+        if type == "object" and has("error")
+        then false
+        else true
+        end
+    ' >/dev/null || fail "RPC $METHOD returned an error"
+}
+
 [ -d "$APP/htdocs" ] || fail "luci-app-korobka source directory not found"
 [ -d "$APP/root" ] || fail "luci-app-korobka root directory not found"
 [ -f "$ROOT/rootfs/usr/bin/korobka-ui-status" ] || fail "korobka-ui-status missing"
@@ -26,8 +41,14 @@ for cmd in \
     [ -x "$cmd" ] || fail "validated Korobka runtime command missing: $cmd"
 done
 
-if ! ucode -e 'import { popen } from "fs"; print("ok\n");' 2>/dev/null | grep -q '^ok$'; then
-    fail "ucode fs module is unavailable"
+if ! ucode -e '
+    import { popen } from "fs";
+    let f = popen("/bin/echo korobka-ucode-popen-ok", "r");
+    if (!f) exit(1);
+    print(f.read("all"));
+    exit(f.close());
+' 2>/dev/null | grep -q '^korobka-ucode-popen-ok$'; then
+    fail "ucode fs.popen string command execution is unavailable"
 fi
 
 mkdir -p \
@@ -73,11 +94,11 @@ ubus -v list luci.korobka
 
 echo
 echo "===== RPC STATUS ====="
-ubus call luci.korobka status | jq .
+rpc_must_succeed status
 
 echo
 echo "===== RPC PEERS ====="
-ubus call luci.korobka peers | jq .
+rpc_must_succeed peers
 
 echo
 echo "luci-app-korobka development install: OK"
