@@ -2,52 +2,60 @@
 
 'use strict';
 
-import { access, popen, readfile } from 'fs';
+import { access, popen, readfile, error } from 'fs';
 import { cursor } from 'uci';
 
-function run_json(argv) {
-    const proc = popen(argv, 'r');
-    if (!proc)
-        return { error: 'Unable to start command' };
+function shellquote(s) {
+    return sprintf("'%s'", replace(`${s}`, "'", "'\\''"));
+}
 
-    let result;
-    try {
-        result = json(proc);
-    }
-    catch (err) {
-        const raw = proc.read('all');
-        proc.close();
-        return { error: 'Invalid command response', detail: raw || `${err}` };
-    }
+function commandline(argv) {
+    let parts = [];
 
-    const rc = proc.close();
-    if (rc != 0)
-        return { error: `Command failed with exit code ${rc}` };
+    for (let i = 0; i < length(argv); i++)
+        push(parts, shellquote(argv[i]));
 
-    return result;
+    return join(parts, ' ');
 }
 
 function run_text(argv) {
-    const proc = popen(argv, 'r');
+    const cmd = commandline(argv) + ' 2>&1';
+    const proc = popen(cmd, 'r');
+
     if (!proc)
-        return { rc: 127, output: '' };
+        return { rc: 127, output: '', error: error() || 'Unable to start command' };
 
     const output = proc.read('all') || '';
     const rc = proc.close();
+
     return { rc, output };
 }
 
-function valid_peer_name(name) {
-    return type(name) == 'string' && match(name, /^[A-Za-z0-9_]+$/) != null;
+function run_json(argv) {
+    const res = run_text(argv);
+
+    if (res.rc != 0)
+        return {
+            error: `Command failed with exit code ${res.rc}`,
+            detail: trim(res.output) || res.error || ''
+        };
+
+    try {
+        return json(res.output);
+    }
+    catch (err) {
+        return {
+            error: 'Invalid command response',
+            detail: trim(res.output) || `${err}`
+        };
+    }
 }
 
-function qr_svg(data) {
-    if (!access('/usr/bin/qrencode', 'x'))
-        return { error: 'qrencode is not installed' };
+function run_svg(command) {
+    const proc = popen(command, 'r');
 
-    const proc = popen(['/usr/bin/qrencode', '-t', 'SVG', '-o', '-', data], 'r');
     if (!proc)
-        return { error: 'Unable to start qrencode' };
+        return { error: error() || 'Unable to start qrencode' };
 
     const svg = proc.read('all') || '';
     const rc = proc.close();
@@ -56,6 +64,33 @@ function qr_svg(data) {
         return { error: `qrencode failed with exit code ${rc}` };
 
     return { svg };
+}
+
+function valid_peer_name(name) {
+    return type(name) == 'string' && match(name, /^[A-Za-z0-9_]+$/) != null;
+}
+
+function wg_qr_svg(path) {
+    if (!access('/usr/bin/qrencode', 'x'))
+        return { error: 'qrencode is not installed' };
+
+    return run_svg(sprintf(
+        "/usr/bin/qrencode -t SVG -o - < %s 2>/dev/null",
+        shellquote(path)
+    ));
+}
+
+function mtg_qr_svg() {
+    if (!access('/usr/bin/qrencode', 'x'))
+        return { error: 'qrencode is not installed' };
+
+    if (!access('/usr/bin/jq', 'x'))
+        return { error: 'jq is not installed' };
+
+    return run_svg(
+        "/usr/bin/jq -r '.ipv4.tme_url // empty' /etc/korobka/mtg/access.json 2>/dev/null | " +
+        "/usr/bin/qrencode -t SVG -o - 2>/dev/null"
+    );
 }
 
 const methods = {
@@ -75,6 +110,7 @@ const methods = {
         args: { name: '' },
         call: function(request) {
             const name = request.args?.name || '';
+
             if (name && !valid_peer_name(name))
                 return { error: 'Peer name may contain only letters, numbers and underscore' };
 
@@ -88,6 +124,7 @@ const methods = {
         args: { name: '' },
         call: function(request) {
             const name = request.args?.name || '';
+
             if (!valid_peer_name(name))
                 return { error: 'Invalid peer name' };
 
@@ -99,45 +136,47 @@ const methods = {
         args: { name: '' },
         call: function(request) {
             const name = request.args?.name || '';
+
             if (!valid_peer_name(name))
                 return { error: 'Invalid peer name' };
 
             const gen = run_text(['/usr/bin/korobka-wg-client', 'generate', name]);
+
             if (gen.rc != 0)
                 return { error: trim(gen.output) || 'WireGuard client config is not ready' };
 
             const path = `/etc/korobka/wireguard/peers/${name}/client.conf`;
-            const config = readfile(path);
-            if (!config)
+
+            if (!readfile(path))
                 return { error: 'Generated client config is missing' };
 
-            return qr_svg(config);
+            return wg_qr_svg(path);
         }
     },
 
     mtg_qr: {
         call: function() {
             const gen = run_text(['/usr/bin/korobka-mtg-access', 'generate']);
+
             if (gen.rc != 0)
                 return { error: trim(gen.output) || 'Telegram access data is not ready' };
 
             const access_data = readfile('/etc/korobka/mtg/access.json');
+
             if (!access_data)
                 return { error: 'MTG access data is missing' };
 
-            let parsed;
             try {
-                parsed = json(access_data);
+                const parsed = json(access_data);
+
+                if (!parsed?.ipv4?.tme_url)
+                    return { error: 'Telegram proxy URL is missing' };
             }
             catch (err) {
                 return { error: 'MTG access data is invalid' };
             }
 
-            const url = parsed?.ipv4?.tme_url;
-            if (!url)
-                return { error: 'Telegram proxy URL is missing' };
-
-            return qr_svg(url);
+            return mtg_qr_svg();
         }
     },
 
@@ -146,6 +185,7 @@ const methods = {
         call: function(request) {
             const confirmed = request.args?.confirmed == true;
             const uci = cursor();
+
             uci.set('korobka', 'endpoint', 'manual_forward_confirmed', confirmed ? '1' : '0');
             const ok = uci.commit('korobka');
             uci.unload();
