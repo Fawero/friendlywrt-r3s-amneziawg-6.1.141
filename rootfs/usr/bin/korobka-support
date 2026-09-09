@@ -1,0 +1,219 @@
+#!/bin/sh
+set -eu
+
+ACTION="${1:-status}"
+ARG="${2:-}"
+BASE="/etc/korobka/support"
+AUTH_DIR="$BASE/auth"
+STATE="$BASE/state.json"
+BUNDLE="$BASE/bundle.json"
+PRIVATE_KEY="$BASE/id_ed25519"
+PUBLIC_KEY="$BASE/id_ed25519.pub"
+FIREWALL_SECTION="korobka_support"
+DEFAULT_TTL=86400
+MAX_TTL=86400
+MIN_PORT=30000
+PORT_SPAN=30000
+
+fail() {
+    echo "ERROR: $*" >&2
+    exit 1
+}
+
+now() {
+    date +%s
+}
+
+random_hex() {
+    BYTES="$1"
+    od -An -N"$BYTES" -tx1 /dev/urandom | tr -d ' \n'
+}
+
+random_port() {
+    N=0
+    while [ "$N" -lt 80 ]; do
+        RAW="$(od -An -N2 -tu2 /dev/urandom | tr -d ' ')"
+        [ -n "$RAW" ] || continue
+        PORT=$((MIN_PORT + (RAW % PORT_SPAN)))
+        if ! netstat -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${PORT}$"; then
+            echo "$PORT"
+            return 0
+        fi
+        N=$((N + 1))
+    done
+    return 1
+}
+
+public_state() {
+    /usr/bin/korobka-public-access status 2>/dev/null || echo '{}'
+}
+
+cleanup_files() {
+    rm -rf "$BASE"
+}
+
+cleanup_firewall() {
+    uci -q delete "firewall.$FIREWALL_SECTION" 2>/dev/null || true
+    uci commit firewall
+    /etc/init.d/firewall reload >/dev/null 2>&1 || true
+}
+
+cleanup_expired() {
+    cleanup_firewall
+    cleanup_files
+}
+
+ensure_not_expired() {
+    [ -s "$STATE" ] || return 0
+    ENABLED="$(jq -r '.enabled // false' "$STATE" 2>/dev/null || echo false)"
+    EXPIRES="$(jq -r '.expires_at // 0' "$STATE" 2>/dev/null || echo 0)"
+    if [ "$ENABLED" = true ] && [ "$EXPIRES" -gt 0 ] && [ "$(now)" -ge "$EXPIRES" ]; then
+        /etc/init.d/korobka-support stop >/dev/null 2>&1 || true
+        cleanup_expired
+    fi
+}
+
+status_json() {
+    ensure_not_expired
+
+    if [ ! -s "$STATE" ]; then
+        PA="$(public_state)"
+        jq -n \
+            --arg network_mode "$(echo "$PA" | jq -r '.mode // "unknown"')" \
+            --arg public_ipv4 "$(echo "$PA" | jq -r '.public_ipv4 // empty')" \
+            '{enabled:false,session_id:null,port:null,created_at:null,expires_at:null,seconds_left:0,network_mode:$network_mode,public_ipv4:(if $public_ipv4=="" then null else $public_ipv4 end),reachable:false,listener:false,bundle_ready:false}'
+        return
+    fi
+
+    NOW="$(now)"
+    PORT="$(jq -r '.port' "$STATE")"
+    EXPIRES="$(jq -r '.expires_at' "$STATE")"
+    LEFT=$((EXPIRES - NOW))
+    [ "$LEFT" -gt 0 ] || LEFT=0
+    LISTENER=false
+    if netstat -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${PORT}$"; then LISTENER=true; fi
+
+    jq \
+        --argjson seconds_left "$LEFT" \
+        --argjson listener "$LISTENER" \
+        --argjson bundle_ready "$([ -s "$BUNDLE" ] && echo true || echo false)" \
+        '. + {seconds_left:$seconds_left,listener:$listener,bundle_ready:$bundle_ready}' "$STATE"
+}
+
+enable_session() {
+    ensure_not_expired
+    if [ -s "$STATE" ] && [ "$(jq -r '.enabled // false' "$STATE")" = true ]; then
+        fail "support session is already enabled"
+    fi
+
+    TTL="$DEFAULT_TTL"
+    if [ -n "$ARG" ]; then
+        case "$ARG" in *[!0-9]*) fail "TTL must be an integer" ;; esac
+        TTL="$ARG"
+    fi
+    [ "$TTL" -gt 0 ] || fail "TTL must be positive"
+    [ "$TTL" -le "$MAX_TTL" ] || TTL="$MAX_TTL"
+
+    command -v ssh-keygen >/dev/null 2>&1 || fail "ssh-keygen is missing"
+    command -v od >/dev/null 2>&1 || fail "od is missing"
+    /usr/sbin/dropbear -h 2>&1 | grep -q -- '-D' || fail "Dropbear does not support isolated authorized_keys directory"
+
+    mkdir -p "$AUTH_DIR"
+    chmod 700 "$BASE" "$AUTH_DIR"
+    umask 077
+
+    PORT="$(random_port)" || { cleanup_files; fail "unable to allocate random support port"; }
+    SESSION="KRBX-$(random_hex 4 | tr 'a-f' 'A-F')"
+    CREATED="$(now)"
+    EXPIRES=$((CREATED + TTL))
+
+    ssh-keygen -q -t ed25519 -N '' -C "korobka-support-$SESSION" -f "$PRIVATE_KEY" \
+        || { cleanup_files; fail "support key generation failed"; }
+    cp "$PUBLIC_KEY" "$AUTH_DIR/authorized_keys"
+    chmod 600 "$PRIVATE_KEY" "$PUBLIC_KEY" "$AUTH_DIR/authorized_keys"
+
+    PA="$(/usr/bin/korobka-public-access refresh 2>/dev/null || public_state)"
+    MODE="$(echo "$PA" | jq -r '.mode // "unknown"')"
+    PUBLIC_IP="$(echo "$PA" | jq -r '.public_ipv4 // empty')"
+    WAN_IP="$(echo "$PA" | jq -r '.wan_ipv4 // empty')"
+    case "$MODE" in
+        direct_public) REACHABLE=true ;;
+        *) REACHABLE=false ;;
+    esac
+
+    jq -n \
+        --arg session_id "$SESSION" \
+        --argjson port "$PORT" \
+        --argjson created_at "$CREATED" \
+        --argjson expires_at "$EXPIRES" \
+        --arg network_mode "$MODE" \
+        --arg public_ipv4 "$PUBLIC_IP" \
+        --arg wan_ipv4 "$WAN_IP" \
+        --argjson reachable "$REACHABLE" \
+        '{enabled:true,session_id:$session_id,port:$port,created_at:$created_at,expires_at:$expires_at,network_mode:$network_mode,public_ipv4:(if $public_ipv4=="" then null else $public_ipv4 end),wan_ipv4:(if $wan_ipv4=="" then null else $wan_ipv4 end),reachable:$reachable}' \
+        > "$STATE"
+    chmod 600 "$STATE"
+
+    jq -n \
+        --arg version "1" \
+        --arg session_id "$SESSION" \
+        --arg host "$PUBLIC_IP" \
+        --argjson port "$PORT" \
+        --arg user "root" \
+        --argjson expires_at "$EXPIRES" \
+        --arg network_mode "$MODE" \
+        --argjson reachable "$REACHABLE" \
+        --rawfile private_key "$PRIVATE_KEY" \
+        '{type:"korobka-support",version:$version,session_id:$session_id,host:(if $host=="" then null else $host end),port:$port,user:$user,expires_at:$expires_at,network_mode:$network_mode,reachable:$reachable,private_key:$private_key}' \
+        > "$BUNDLE"
+    chmod 600 "$BUNDLE"
+
+    uci -q delete "firewall.$FIREWALL_SECTION" 2>/dev/null || true
+    uci set "firewall.$FIREWALL_SECTION=rule"
+    uci set "firewall.$FIREWALL_SECTION.name=KOROBKA-SUPPORT-TEMP"
+    uci set "firewall.$FIREWALL_SECTION.src=wan"
+    uci set "firewall.$FIREWALL_SECTION.proto=tcp"
+    uci set "firewall.$FIREWALL_SECTION.family=ipv4"
+    uci set "firewall.$FIREWALL_SECTION.dest_port=$PORT"
+    uci set "firewall.$FIREWALL_SECTION.target=ACCEPT"
+    uci commit firewall
+    /etc/init.d/firewall reload
+
+    /etc/init.d/korobka-support restart
+    sleep 1
+
+    if ! netstat -lnt 2>/dev/null | awk '{print $4}' | grep -Eq "[:.]${PORT}$"; then
+        /etc/init.d/korobka-support stop >/dev/null 2>&1 || true
+        cleanup_firewall
+        cleanup_files
+        fail "support Dropbear listener did not start"
+    fi
+
+    status_json
+}
+
+disable_session() {
+    /etc/init.d/korobka-support stop >/dev/null 2>&1 || true
+    cleanup_firewall
+    cleanup_files
+    jq -n '{ok:true,enabled:false,action:"disabled"}'
+}
+
+bundle_json() {
+    ensure_not_expired
+    [ -s "$STATE" ] || fail "support session is not enabled"
+    [ -s "$BUNDLE" ] || fail "support bundle is missing"
+    cat "$BUNDLE"
+}
+
+case "$ACTION" in
+    status) status_json ;;
+    enable) enable_session ;;
+    disable) disable_session ;;
+    bundle) bundle_json ;;
+    expire-cleanup) cleanup_expired ;;
+    *)
+        echo "Usage: $0 {status|enable [ttl_seconds]|disable|bundle|expire-cleanup}" >&2
+        exit 2
+        ;;
+esac
