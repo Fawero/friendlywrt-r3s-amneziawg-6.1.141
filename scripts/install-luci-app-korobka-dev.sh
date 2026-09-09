@@ -103,7 +103,13 @@ rpc_must_succeed status
 
 echo
 echo "===== RPC PEERS ====="
-rpc_must_succeed peers
+PEERS_OUT="$(ubus call luci.korobka peers)" || fail "RPC peers transport failed"
+echo "$PEERS_OUT" | jq .
+echo "$PEERS_OUT" | jq -e '
+    type == "object" and
+    (has("error") | not) and
+    (.peers | type == "array")
+' >/dev/null || fail "RPC peers returned invalid wrapped contract"
 
 echo
 echo "luci-app-korobka development install: OK"
